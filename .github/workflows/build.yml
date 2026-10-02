@@ -85,7 +85,7 @@ jobs:
           test -d "${ANDROID_SDK_ROOT}/platforms/android-36"
 
           echo
-          echo "===== Build Tools ====="
+          echo "===== Build Tools 36.0.0 ====="
           test -d "${ANDROID_SDK_ROOT}/build-tools/36.0.0"
 
       - name: Detect MaterialIcons
@@ -97,8 +97,8 @@ jobs:
             grep -Rho \
               '^import [^;]*MaterialIcons;' \
               mt-plugin-v3-demo \
-              2>/dev/null \
-              | head -n 1 || true
+              2>/dev/null |
+            head -n 1 || true
           )"
 
           if [ -z "${MATERIAL_IMPORT}" ]; then
@@ -106,8 +106,8 @@ jobs:
             grep -R \
               "MaterialIcons" \
               mt-plugin-v3-demo \
-              2>/dev/null \
-              | head -n 100 || true
+              2>/dev/null |
+            head -n 100 || true
             exit 1
           fi
 
@@ -115,8 +115,8 @@ jobs:
             grep -Rho \
               'MaterialIcons\.get("[^"]*")' \
               mt-plugin-v3-demo \
-              2>/dev/null \
-              | head -n 1 || true
+              2>/dev/null |
+            head -n 1 || true
           )"
 
           if [ -z "${MATERIAL_ICON_EXPR}" ]; then
@@ -126,22 +126,20 @@ jobs:
           echo "MATERIAL_IMPORT=${MATERIAL_IMPORT}" >> "${GITHUB_ENV}"
           echo "MATERIAL_ICON_EXPR=${MATERIAL_ICON_EXPR}" >> "${GITHUB_ENV}"
 
-      - name: Configure internet permission
+          echo "MaterialIcons import:"
+          echo "${MATERIAL_IMPORT}"
+
+          echo "MaterialIcons expression:"
+          echo "${MATERIAL_ICON_EXPR}"
+
+      - name: Configure AndroidManifest safely
         shell: bash
         run: |
           set -e
 
-          MANIFEST="mt-plugin-v3-demo/template/src/main/AndroidManifest.xml"
-
-          if [ ! -f "${MANIFEST}" ]; then
-            echo "ERROR: AndroidManifest.xml not found:"
-            echo "${MANIFEST}"
-            exit 1
-          fi
-
           python3 - <<'PY'
           from pathlib import Path
-          import re
+          import xml.etree.ElementTree as ET
 
           path = Path(
               "mt-plugin-v3-demo/template/src/main/AndroidManifest.xml"
@@ -157,32 +155,36 @@ jobs:
           )
 
           if "android.permission.INTERNET" not in text:
-              match = re.search(
-                  r"<manifest\b[^>]*>",
-                  text
-              )
 
-              if not match:
+              closing = "</manifest>"
+
+              if closing not in text:
                   raise SystemExit(
-                      "ERROR: manifest opening tag not found."
+                      "ERROR: </manifest> not found"
                   )
 
-              insert_at = match.end()
-
-              text = (
-                  text[:insert_at]
-                  + "\n    "
+              text = text.replace(
+                  closing,
+                  "    "
                   + permission
-                  + text[insert_at:]
+                  + "\n"
+                  + closing,
+                  1
               )
 
           path.write_text(
               text,
               encoding="utf-8"
           )
+
+          ET.parse(path)
+
+          print(
+              "AndroidManifest.xml: valid XML"
+          )
           PY
 
-      - name: Create Markwon source
+      - name: Create Markwon Prism bundle
         shell: bash
         run: |
           set -e
@@ -206,7 +208,7 @@ jobs:
                           "javascript",
                           "json",
                           "python",
-                          "xml",
+                          "markup",
                           "css",
                           "c",
                           "cpp",
@@ -230,21 +232,28 @@ jobs:
           }
           JAVA
 
+      - name: Create Markwon renderer
+        shell: bash
+        run: |
+          set -e
+
+          SRC="mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown"
+
           cat > "${SRC}/MarkwonRenderer.java" <<'JAVA'
           package com.example.mtmarkdown;
 
           import android.content.Context;
           import android.text.Spanned;
+          import android.widget.TextView;
 
           import io.noties.markwon.Markwon;
+          import io.noties.markwon.ext.latex.JLatexMathPlugin;
           import io.noties.markwon.ext.strikethrough.StrikethroughPlugin;
           import io.noties.markwon.ext.tables.TablePlugin;
           import io.noties.markwon.ext.tasklist.TaskListPlugin;
           import io.noties.markwon.html.HtmlPlugin;
           import io.noties.markwon.image.ImagesPlugin;
           import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin;
-          import io.noties.markwon.latex.JLatexMathPlugin;
-          import io.noties.markwon.syntax.Prism4jSyntaxHighlight;
           import io.noties.markwon.syntax.Prism4jThemeDefault;
           import io.noties.markwon.syntax.SyntaxHighlightPlugin;
           import io.noties.prism4j.Prism4j;
@@ -255,7 +264,7 @@ jobs:
 
               public MarkwonRenderer(
                       Context context,
-                      int textSizePx
+                      float textSizePx
               ) {
 
                   Prism4j prism4j =
@@ -266,69 +275,34 @@ jobs:
                   markwon =
                           Markwon.builder(context)
 
-                                  /*
-                                   * Standard Markdown core.
-                                   */
-
-                                  /*
-                                   * GFM tables.
-                                   */
-                                  .usePlugin(
-                                          TablePlugin.create(
-                                                  context
-                                          )
-                                  )
-
-                                  /*
-                                   * GFM task lists.
-                                   */
-                                  .usePlugin(
-                                          TaskListPlugin.create(
-                                                  context
-                                          )
-                                  )
-
-                                  /*
-                                   * GFM strikethrough.
-                                   */
                                   .usePlugin(
                                           StrikethroughPlugin.create()
                                   )
 
-                                  /*
-                                   * Markdown HTML.
-                                   */
+                                  .usePlugin(
+                                          TablePlugin.create()
+                                  )
+
+                                  .usePlugin(
+                                          TaskListPlugin.create()
+                                  )
+
                                   .usePlugin(
                                           HtmlPlugin.create()
                                   )
 
-                                  /*
-                                   * Images:
-                                   * http / https / file / data URI.
-                                   */
                                   .usePlugin(
                                           ImagesPlugin.create()
                                   )
 
                                   /*
-                                   * LaTeX inline parser.
+                                   * LaTeX 行内公式需要
+                                   * MarkwonInlineParserPlugin。
                                    */
                                   .usePlugin(
                                           MarkwonInlineParserPlugin.create()
                                   )
 
-                                  /*
-                                   * LaTeX formula rendering.
-                                   *
-                                   * Supports block formulas:
-                                   *
-                                   * $$
-                                   * E = mc^2
-                                   * $$
-                                   *
-                                   * And inline formulas using Markwon's
-                                   * enabled inline syntax.
-                                   */
                                   .usePlugin(
                                           JLatexMathPlugin.create(
                                                   textSizePx,
@@ -345,14 +319,10 @@ jobs:
                                           )
                                   )
 
-                                  /*
-                                   * Prism4j code highlighting.
-                                   */
                                   .usePlugin(
                                           SyntaxHighlightPlugin.create(
                                                   prism4j,
-                                                  Prism4jThemeDefault.create(),
-                                                  "clike"
+                                                  Prism4jThemeDefault.create()
                                           )
                                   )
 
@@ -363,19 +333,469 @@ jobs:
                       String markdown
               ) {
 
-                  if (markdown == null ||
-                          markdown.isEmpty()) {
-
-                      return markwon.toMarkdown("");
-                  }
-
                   return markwon.toMarkdown(
-                          markdown
+                          normalizeLatex(markdown)
                   );
               }
 
-              public Markwon getMarkwon() {
-                  return markwon;
+              public void renderInto(
+                      TextView textView,
+                      String markdown
+              ) {
+
+                  markwon.setMarkdown(
+                          textView,
+                          normalizeLatex(markdown)
+                  );
+              }
+
+              private static String normalizeLatex(
+                      String input
+              ) {
+
+                  if (input == null ||
+                          input.isEmpty()) {
+                      return "";
+                  }
+
+                  StringBuilder out =
+                          new StringBuilder(
+                                  input.length() + 64
+                          );
+
+                  boolean fencedCode = false;
+                  boolean inlineCode = false;
+
+                  int i = 0;
+
+                  while (i < input.length()) {
+
+                      /*
+                       * fenced code block
+                       */
+                      if (input.startsWith(
+                              "```",
+                              i
+                      )) {
+
+                          fencedCode =
+                                  !fencedCode;
+
+                          out.append("```");
+
+                          i += 3;
+
+                          continue;
+                      }
+
+                      char c =
+                              input.charAt(i);
+
+                      /*
+                       * inline code
+                       */
+                      if (!fencedCode &&
+                              c == '`') {
+
+                          inlineCode =
+                                  !inlineCode;
+
+                          out.append(c);
+
+                          i++;
+
+                          continue;
+                      }
+
+                      /*
+                       * \( ... \)
+                       */
+                      if (!fencedCode &&
+                              !inlineCode &&
+                              c == '\\' &&
+                              i + 1 < input.length() &&
+                              input.charAt(i + 1) == '(') {
+
+                          int end =
+                                  input.indexOf(
+                                          "\\)",
+                                          i + 2
+                                  );
+
+                          if (end >= 0) {
+
+                              String formula =
+                                      input.substring(
+                                              i + 2,
+                                              end
+                                      );
+
+                              out.append("$$")
+                                      .append(formula)
+                                      .append("$$");
+
+                              i = end + 2;
+
+                              continue;
+                          }
+                      }
+
+                      /*
+                       * \[ ... \]
+                       */
+                      if (!fencedCode &&
+                              !inlineCode &&
+                              c == '\\' &&
+                              i + 1 < input.length() &&
+                              input.charAt(i + 1) == '[') {
+
+                          int end =
+                                  input.indexOf(
+                                          "\\]",
+                                          i + 2
+                                  );
+
+                          if (end >= 0) {
+
+                              String formula =
+                                      input.substring(
+                                              i + 2,
+                                              end
+                                      );
+
+                              out.append("$$\n")
+                                      .append(formula)
+                                      .append("\n$$");
+
+                              i = end + 2;
+
+                              continue;
+                          }
+                      }
+
+                      /*
+                       * Escaped dollar.
+                       */
+                      if (!fencedCode &&
+                              !inlineCode &&
+                              c == '\\' &&
+                              i + 1 < input.length() &&
+                              input.charAt(i + 1) == '$') {
+
+                          out.append("\\$");
+
+                          i += 2;
+
+                          continue;
+                      }
+
+                      /*
+                       * Keep existing $$ block/inline formulas unchanged.
+                       */
+                      if (!fencedCode &&
+                              !inlineCode &&
+                              c == '$' &&
+                              i + 1 < input.length() &&
+                              input.charAt(i + 1) == '$') {
+
+                          out.append("$$");
+
+                          i += 2;
+
+                          continue;
+                      }
+
+                      /*
+                       * Common Markdown also uses $...$.
+                       *
+                       * Markwon's LaTeX extension uses $$...$$
+                       * for inline formulas, so convert an unescaped
+                       * single-dollar pair.
+                       */
+                      if (!fencedCode &&
+                              !inlineCode &&
+                              c == '$') {
+
+                          int end =
+                                  findSingleDollarEnd(
+                                          input,
+                                          i + 1
+                                  );
+
+                          if (end >= 0) {
+
+                              String formula =
+                                      input.substring(
+                                              i + 1,
+                                              end
+                                      );
+
+                              if (looksLikeLatex(
+                                      formula
+                              )) {
+
+                                  out.append("$$")
+                                          .append(formula)
+                                          .append("$$");
+
+                                  i = end + 1;
+
+                                  continue;
+                              }
+                          }
+                      }
+
+                      out.append(c);
+
+                      i++;
+                  }
+
+                  return out.toString();
+              }
+
+              private static int findSingleDollarEnd(
+                      String text,
+                      int start
+              ) {
+
+                  for (
+                          int i = start;
+                          i < text.length();
+                          i++
+                  ) {
+
+                      char c =
+                              text.charAt(i);
+
+                      /*
+                       * Single-dollar inline formula cannot cross
+                       * a physical line.
+                       */
+                      if (c == '\n' ||
+                              c == '\r') {
+                          return -1;
+                      }
+
+                      if (c == '\\') {
+                          i++;
+                          continue;
+                      }
+
+                      if (c == '$') {
+
+                          if (i + 1 < text.length() &&
+                                  text.charAt(i + 1) == '$') {
+
+                              i++;
+
+                              continue;
+                          }
+
+                          return i;
+                      }
+                  }
+
+                  return -1;
+              }
+
+              private static boolean looksLikeLatex(
+                      String formula
+              ) {
+
+                  String value =
+                          formula.trim();
+
+                  if (value.isEmpty() ||
+                          value.length() > 10000) {
+
+                      return false;
+                  }
+
+                  /*
+                   * Avoid turning simple currency expressions such as
+                   * $100 or $12.50 into formulas.
+                   */
+                  if (value.matches(
+                          "[0-9.,+\\- ]+"
+                  )) {
+                      return false;
+                  }
+
+                  return value.contains("\\")
+                          || value.contains("^")
+                          || value.contains("_")
+                          || value.contains("{")
+                          || value.contains("}")
+                          || value.contains("=")
+                          || value.matches(
+                                  ".*[A-Za-z].*"
+                          );
+              }
+          }
+          JAVA
+
+      - name: Create native TextView finder
+        shell: bash
+        run: |
+          set -e
+
+          SRC="mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown"
+
+          cat > "${SRC}/NativeTextViewFinder.java" <<'JAVA'
+          package com.example.mtmarkdown;
+
+          import android.widget.TextView;
+
+          import java.lang.reflect.Field;
+          import java.lang.reflect.Modifier;
+          import java.util.Collections;
+          import java.util.IdentityHashMap;
+          import java.util.Set;
+
+          public final class NativeTextViewFinder {
+
+              private NativeTextViewFinder() {
+              }
+
+              public static TextView find(
+                      Object root
+              ) {
+
+                  Set<Object> visited =
+                          Collections.newSetFromMap(
+                                  new IdentityHashMap<>()
+                          );
+
+                  return find(
+                          root,
+                          visited,
+                          0
+                  );
+              }
+
+              private static TextView find(
+                      Object value,
+                      Set<Object> visited,
+                      int depth
+              ) {
+
+                  if (value == null ||
+                          depth > 6 ||
+                          visited.contains(value)) {
+
+                      return null;
+                  }
+
+                  visited.add(value);
+
+                  if (value instanceof TextView) {
+                      return (TextView) value;
+                  }
+
+                  Class<?> type =
+                          value.getClass();
+
+                  while (
+                          type != null &&
+                          type != Object.class
+                  ) {
+
+                      Field[] fields;
+
+                      try {
+                          fields =
+                                  type.getDeclaredFields();
+                      } catch (Throwable ignored) {
+
+                          fields =
+                                  new Field[0];
+                      }
+
+                      for (
+                              Field field : fields
+                      ) {
+
+                          int modifiers =
+                                  field.getModifiers();
+
+                          if (
+                                  Modifier.isStatic(
+                                          modifiers
+                                  )
+                          ) {
+                              continue;
+                          }
+
+                          try {
+
+                              field.setAccessible(
+                                      true
+                              );
+
+                              Object child =
+                                      field.get(value);
+
+                              if (child == null) {
+                                  continue;
+                              }
+
+                              if (
+                                      child instanceof TextView
+                              ) {
+
+                                  return (
+                                          TextView
+                                                  ) child;
+                              }
+
+                              Class<?> childType =
+                                      child.getClass();
+
+                              Package pkg =
+                                      childType.getPackage();
+
+                              String packageName =
+                                      pkg == null
+                                              ? ""
+                                              : pkg.getName();
+
+                              /*
+                               * Only walk MT wrapper objects and
+                               * Android View/ViewGroup objects.
+                               */
+                              if (
+                                      packageName.startsWith(
+                                              "bin.mt.plugin"
+                                      ) ||
+                                      child instanceof
+                                              android.view.ViewGroup
+                              ) {
+
+                                  TextView result =
+                                          find(
+                                                  child,
+                                                  visited,
+                                                  depth + 1
+                                          );
+
+                                  if (
+                                          result != null
+                                  ) {
+                                      return result;
+                                  }
+                              }
+
+                          } catch (
+                                  Throwable ignored
+                          ) {
+                          }
+                      }
+
+                      type =
+                              type.getSuperclass();
+                  }
+
+                  return null;
               }
           }
           JAVA
@@ -392,10 +812,18 @@ jobs:
 
           import android.content.Context;
           import android.graphics.drawable.Drawable;
+          import android.os.Handler;
+          import android.os.Looper;
           import android.text.Spanned;
+          import android.widget.TextView;
+
+          import java.util.concurrent.ExecutorService;
+          import java.util.concurrent.Executors;
 
           import bin.mt.plugin.api.editor.BaseTextEditorToolMenu;
           import bin.mt.plugin.api.editor.TextEditor;
+          import bin.mt.plugin.api.ui.PluginDialog;
+          import bin.mt.plugin.api.ui.PluginTextView;
           import bin.mt.plugin.api.ui.PluginUI;
           import bin.mt.plugin.api.ui.PluginView;
 
@@ -404,7 +832,16 @@ jobs:
           public final class MarkdownPreviewToolMenu
                   extends BaseTextEditorToolMenu {
 
-              private static final int MAX_CHARS = 300000;
+              private static final int MAX_CHARS =
+                      300000;
+
+              private final ExecutorService executor =
+                      Executors.newSingleThreadExecutor();
+
+              private final Handler mainHandler =
+                      new Handler(
+                              Looper.getMainLooper()
+                      );
 
               private MarkwonRenderer renderer;
 
@@ -426,58 +863,68 @@ jobs:
               }
 
               @Override
-              public void init() {
-                  /*
-                   * PluginContext 在 MT V3 运行时提供插件资源/
-                   * 宿主环境。为了兼容不同 V3 API 版本，这里
-                   * 不在编译期依赖额外的 Context 获取方法。
-                   */
-              }
-
-              @Override
               public void onMenuClick(
                       PluginUI pluginUI,
                       TextEditor editor
               ) {
 
+                  final String markdown;
+
                   try {
 
-                      String markdown =
-                              readMarkdown(editor);
+                      markdown =
+                              readMarkdown(
+                                      editor
+                              );
 
-                      if (markdown == null ||
-                              markdown.trim().isEmpty()) {
+                  } catch (Throwable error) {
 
-                          pluginUI.showToast(
-                                  "没有可预览的 Markdown 内容"
-                          );
+                      pluginUI.showErrorMessage(
+                              error
+                      );
 
-                          return;
-                      }
+                      return;
+                  }
 
-                      if (markdown.length() >
-                              MAX_CHARS) {
+                  if (
+                          markdown == null ||
+                          markdown.trim().isEmpty()
+                  ) {
 
-                          markdown =
-                                  markdown.substring(
-                                          0,
-                                          MAX_CHARS
-                                  );
+                      pluginUI.showToast(
+                              "没有可预览的 Markdown 内容"
+                      );
 
-                          pluginUI.showToast(
-                                  "内容超过 300000 字符，"
-                                          + "已截取前 300000 字符"
-                          );
-                      }
+                      return;
+                  }
 
-                      /*
-                       * 使用 MT PluginUI 的宿主 Context。
-                       *
-                       * PluginContext 在 V3 实现中作为
-                       * Android ContextWrapper 使用。
-                       */
+                  final String source;
+
+                  if (
+                          markdown.length() >
+                                  MAX_CHARS
+                  ) {
+
+                      source =
+                              markdown.substring(
+                                      0,
+                                      MAX_CHARS
+                              );
+
+                      pluginUI.showToast(
+                              "文档超过 300000 字符，"
+                                      + "只渲染前 300000 字符"
+                      );
+
+                  } else {
+
+                      source = markdown;
+                  }
+
+                  try {
+
                       Context context =
-                              (Context) pluginUI.getContext();
+                              pluginUI.getContext();
 
                       if (renderer == null) {
 
@@ -488,23 +935,125 @@ jobs:
                                   );
                       }
 
-                      /*
-                       * Markdown
-                       *    ↓
-                       * Markwon
-                       *    ↓
-                       * Android-native Spanned
-                       *
-                       * 不经过 HTML。
-                       */
-                      Spanned rendered =
-                              renderer.render(
-                                      markdown
+                      PluginView preview =
+                              pluginUI
+                                      .buildVerticalLayout()
+                                      .paddingDp(4)
+                                      .addTextView(
+                                              "markdown_content"
+                                      )
+                                      .text("")
+                                      .paddingDp(16)
+                                      .widthMatchParent()
+                                      .build();
+
+                      PluginTextView pluginTextView =
+                              preview.requireViewById(
+                                      "markdown_content"
                               );
 
-                      showPreview(
-                              pluginUI,
-                              rendered
+                      PluginDialog dialog =
+                              pluginUI
+                                      .buildDialog()
+                                      .setTitle(
+                                              "Markdown 预览 · Markwon 4.6.2"
+                                      )
+                                      .setView(
+                                              preview
+                                      )
+                                      .setPositiveButton(
+                                              "关闭",
+                                              null
+                                      )
+                                      .create();
+
+                      dialog.show();
+
+                      TextView nativeTextView =
+                              NativeTextViewFinder.find(
+                                      pluginTextView
+                              );
+
+                      if (
+                              nativeTextView == null
+                      ) {
+
+                          throw new IllegalStateException(
+                                  "无法取得 MT 原生 TextView"
+                          );
+                      }
+
+                      pluginUI.showToast(
+                              "正在渲染 Markdown…"
+                      );
+
+                      final TextView target =
+                              nativeTextView;
+
+                      executor.execute(
+                              () -> {
+
+                                  try {
+
+                                      final Spanned rendered =
+                                              renderer.render(
+                                                      source
+                                              );
+
+                                      mainHandler.post(
+                                              () -> {
+
+                                                  try {
+
+                                                      /*
+                                                       * 关键点：
+                                                       *
+                                                       * Markwon 不经过 HTML。
+                                                       *
+                                                       * 使用 setParsedMarkdown/
+                                                       * setMarkdown 的完整生命周期，
+                                                       * 让图片、LaTeX Drawable、
+                                                       * 代码高亮等插件得到
+                                                       * beforeSetText/afterSetText
+                                                       * 回调。
+                                                       */
+                                                      renderer
+                                                              .getClass();
+
+                                                      renderer
+                                                              .apply(
+                                                                      target,
+                                                                      rendered
+                                                              );
+
+                                                      pluginUI
+                                                              .cancelToast();
+
+                                                  } catch (
+                                                          Throwable error
+                                                  ) {
+
+                                                      pluginUI
+                                                              .showErrorMessage(
+                                                                      error
+                                                              );
+                                                  }
+                                              }
+                                      );
+
+                                  } catch (
+                                          Throwable error
+                                  ) {
+
+                                      mainHandler.post(
+                                              () ->
+                                                      pluginUI
+                                                              .showErrorMessage(
+                                                                      error
+                                                              )
+                                      );
+                                  }
+                              }
                       );
 
                   } catch (Throwable error) {
@@ -538,48 +1087,121 @@ jobs:
                           editor.length()
                   );
               }
-
-              private void showPreview(
-                      PluginUI pluginUI,
-                      Spanned content
-              ) {
-
-                  /*
-                   * Markwon produces Spanned directly.
-                   *
-                   * The PluginTextView builder receives the
-                   * CharSequence unchanged, so heading / bold /
-                   * italic / strike / code / list / quote /
-                   * tables / images / LaTeX spans remain intact.
-                   */
-
-                  PluginView preview =
-                          pluginUI
-                                  .buildVerticalLayout()
-                                  .addTextView(
-                                          "markdown_content"
-                                  )
-                                  .text(
-                                          content
-                                  )
-                                  .paddingDp(16)
-                                  .widthMatchParent()
-                                  .build();
-
-                  pluginUI
-                          .buildDialog()
-                          .setTitle(
-                                  "Markdown 预览 · Markwon 4.6.2"
-                          )
-                          .setView(preview)
-                          .setPositiveButton(
-                                  "关闭",
-                                  null
-                          )
-                          .show();
-              }
           }
           JAVA
+
+      - name: Add Markwon apply method
+        shell: bash
+        run: |
+          set -e
+
+          FILE="mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkwonRenderer.java"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(
+              "mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkwonRenderer.java"
+          )
+
+          text = path.read_text(
+              encoding="utf-8"
+          )
+
+          old = """
+              public void renderInto(
+                      TextView textView,
+                      String markdown
+              ) {
+
+                  markwon.setMarkdown(
+                          textView,
+                          normalizeLatex(markdown)
+                  );
+              }
+          """.strip()
+
+          new = """
+              public void apply(
+                      TextView textView,
+                      Spanned rendered
+              ) {
+
+                  markwon.setParsedMarkdown(
+                          textView,
+                          rendered
+                  );
+              }
+          """.strip()
+
+          if old not in text:
+              raise SystemExit(
+                  "ERROR: renderInto block not found"
+              )
+
+          text = text.replace(
+              old,
+              new
+          )
+
+          path.write_text(
+              text,
+              encoding="utf-8"
+          )
+          PY
+
+      - name: Remove unused Markwon renderer method import
+        shell: bash
+        run: |
+          set -e
+
+          FILE="mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkwonRenderer.java"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(
+              "mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkwonRenderer.java"
+          )
+
+          text = path.read_text(
+              encoding="utf-8"
+          )
+
+          text = text.replace(
+              "import android.widget.TextView;\n",
+              "import android.widget.TextView;\n"
+          )
+
+          path.write_text(
+              text,
+              encoding="utf-8"
+          )
+          PY
+
+      - name: Verify Java sources
+        shell: bash
+        run: |
+          set -e
+
+          echo "===== MarkwonRenderer.java ====="
+          sed -n '1,520p' \
+            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkwonRenderer.java
+
+          echo
+          echo "===== MarkdownPreviewToolMenu.java ====="
+          sed -n '1,520p' \
+            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java
+
+          echo
+          echo "===== NativeTextViewFinder.java ====="
+          sed -n '1,420p' \
+            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/NativeTextViewFinder.java
+
+          echo
+          echo "===== Prism bundle ====="
+          sed -n '1,260p' \
+            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPrismBundle.java
 
       - name: Configure Gradle dependencies
         shell: bash
@@ -598,7 +1220,38 @@ jobs:
           )
 
           # ---------------------------------------------------------
-          # Replace mtPlugin block safely.
+          # Remove old renderer dependencies.
+          # ---------------------------------------------------------
+
+          prefixes = (
+              'implementation "org.commonmark:',
+              'implementation "io.noties.markwon:',
+              'implementation "io.noties:',
+              'annotationProcessor "io.noties:',
+          )
+
+          cleaned = []
+
+          for line in text.splitlines():
+
+              stripped = line.strip()
+
+              if any(
+                  stripped.startswith(
+                      prefix
+                  )
+                  for prefix in prefixes
+              ):
+                  continue
+
+              cleaned.append(line)
+
+          text = "\n".join(
+              cleaned
+          ) + "\n"
+
+          # ---------------------------------------------------------
+          # Replace mtPlugin {...} safely.
           # ---------------------------------------------------------
 
           marker = "mtPlugin"
@@ -606,7 +1259,7 @@ jobs:
 
           if start < 0:
               raise SystemExit(
-                  "ERROR: mtPlugin block not found."
+                  "ERROR: mtPlugin block not found"
               )
 
           open_brace = text.find(
@@ -616,7 +1269,7 @@ jobs:
 
           if open_brace < 0:
               raise SystemExit(
-                  "ERROR: mtPlugin opening brace not found."
+                  "ERROR: mtPlugin opening brace not found"
               )
 
           depth = 0
@@ -627,12 +1280,11 @@ jobs:
               len(text)
           ):
 
-              ch = text[i]
-
-              if ch == "{":
+              if text[i] == "{":
                   depth += 1
 
-              elif ch == "}":
+              elif text[i] == "}":
+
                   depth -= 1
 
                   if depth == 0:
@@ -641,16 +1293,16 @@ jobs:
 
           if end is None:
               raise SystemExit(
-                  "ERROR: mtPlugin closing brace not found."
+                  "ERROR: mtPlugin closing brace not found"
               )
 
           plugin_block = """
           mtPlugin {
               pluginID = "com.example.mtmarkdownpreview"
-              versionCode = 10
-              versionName = "v2.0.0"
+              versionCode = 20
+              versionName = "v3.0.0"
               name = "Markdown 预览"
-              description = "MT 管理器 Markdown 预览插件 · Markwon · LaTeX · GFM · 代码高亮"
+              description = "MT 管理器高质量 Markdown 预览 · Markwon · LaTeX · GFM · 代码高亮 · 图片"
 
               interfaces = [
                   "com.example.mtmarkdown.MarkdownPreviewToolMenu"
@@ -665,46 +1317,15 @@ jobs:
           )
 
           # ---------------------------------------------------------
-          # Remove our previous Markwon / CommonMark dependency lines
-          # if the workflow is re-run against an existing checked-out
-          # template.
-          # ---------------------------------------------------------
-
-          unwanted_prefixes = (
-              "implementation \"org.commonmark:",
-              "implementation \"io.noties.markwon:",
-              "implementation \"io.noties:",
-              "annotationProcessor \"io.noties:",
-          )
-
-          lines = text.splitlines()
-
-          filtered = []
-
-          for line in lines:
-
-              stripped = line.strip()
-
-              if any(
-                  stripped.startswith(prefix)
-                  for prefix in unwanted_prefixes
-              ):
-                  continue
-
-              filtered.append(line)
-
-          text = "\n".join(filtered) + "\n"
-
-          # ---------------------------------------------------------
-          # Find dependencies block.
+          # Add Markwon.
           # ---------------------------------------------------------
 
           dependencies = """
                   implementation "io.noties.markwon:core:4.6.2"
-                  implementation "io.noties.markwon:ext-latex:4.6.2"
+                  implementation "io.noties.markwon:ext-strikethrough:4.6.2"
                   implementation "io.noties.markwon:ext-tables:4.6.2"
                   implementation "io.noties.markwon:ext-tasklist:4.6.2"
-                  implementation "io.noties.markwon:ext-strikethrough:4.6.2"
+                  implementation "io.noties.markwon:ext-latex:4.6.2"
                   implementation "io.noties.markwon:html:4.6.2"
                   implementation "io.noties.markwon:image:4.6.2"
                   implementation "io.noties.markwon:inline-parser:4.6.2"
@@ -714,9 +1335,10 @@ jobs:
                   annotationProcessor "io.noties:prism4j-bundler:2.0.0"
           """.strip()
 
-          dependency_marker = text.find(
-              "dependencies {"
-          )
+          dependency_marker =
+              text.find(
+                  "dependencies {"
+              )
 
           if dependency_marker < 0:
 
@@ -724,68 +1346,104 @@ jobs:
                   "\n"
                   "dependencies {\n"
                   + dependencies
-                  + "\n"
-                  "}\n"
+                  + "\n}\n"
               )
 
           else:
 
-              dependency_brace = text.find(
-                  "{",
-                  dependency_marker
-              )
+              dependency_brace =
+                  text.find(
+                      "{",
+                      dependency_marker
+                  )
 
               if dependency_brace < 0:
                   raise SystemExit(
-                      "ERROR: dependencies opening brace not found."
+                      "ERROR: dependencies opening brace not found"
                   )
 
               text = (
-                  text[:dependency_brace + 1]
+                  text[
+                      :dependency_brace + 1
+                  ]
                   + "\n"
                   + dependencies
-                  + text[dependency_brace + 1:]
+                  + text[
+                      dependency_brace + 1:
+                  ]
               )
 
           path.write_text(
               text,
               encoding="utf-8"
           )
+
+          print(
+              "build.gradle updated"
+          )
           PY
 
-      - name: Verify generated source
+      - name: Final validation
         shell: bash
         run: |
           set -e
 
-          echo "===== AndroidManifest.xml ====="
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
 
-          cat \
-            mt-plugin-v3-demo/template/src/main/AndroidManifest.xml
+          manifest = Path(
+              "mt-plugin-v3-demo/template/src/main/AndroidManifest.xml"
+          )
 
-          echo
-          echo "===== template/build.gradle ====="
+          ET.parse(manifest)
 
-          sed -n '1,460p' \
-            mt-plugin-v3-demo/template/build.gradle
+          build_gradle = Path(
+              "mt-plugin-v3-demo/template/build.gradle"
+          ).read_text(
+              encoding="utf-8"
+          )
 
-          echo
-          echo "===== MarkdownPrismBundle.java ====="
+          required = [
+              'pluginID = "com.example.mtmarkdownpreview"',
+              'versionName = "v3.0.0"',
+              'com.example.mtmarkdown.MarkdownPreviewToolMenu',
+              'io.noties.markwon:core:4.6.2',
+              'io.noties.markwon:ext-latex:4.6.2',
+              'io.noties.markwon:syntax-highlight:4.6.2',
+              'io.noties:prism4j:2.0.0',
+              'annotationProcessor "io.noties:prism4j-bundler:2.0.0"',
+          ]
 
-          sed -n '1,260p' \
-            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPrismBundle.java
+          for item in required:
 
-          echo
-          echo "===== MarkwonRenderer.java ====="
+              if item not in build_gradle:
+                  raise SystemExit(
+                      "ERROR: missing required Gradle entry: "
+                      + item
+                  )
 
-          sed -n '1,420p' \
-            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkwonRenderer.java
+          source_root = Path(
+              "mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown"
+          )
 
-          echo
-          echo "===== MarkdownPreviewToolMenu.java ====="
+          expected_files = [
+              source_root / "MarkdownPrismBundle.java",
+              source_root / "MarkwonRenderer.java",
+              source_root / "NativeTextViewFinder.java",
+              source_root / "MarkdownPreviewToolMenu.java",
+          ]
 
-          sed -n '1,480p' \
-            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java
+          for file in expected_files:
+
+              if not file.is_file():
+                  raise SystemExit(
+                      "ERROR: missing source file: "
+                      + str(file)
+                  )
+
+          print("Final source/config validation: OK")
+          PY
 
       - name: Prepare Gradle
         working-directory: mt-plugin-v3-demo
@@ -794,14 +1452,6 @@ jobs:
           set -e
 
           chmod +x ./gradlew
-
-      - name: Check Gradle
-        working-directory: mt-plugin-v3-demo
-        shell: bash
-        run: |
-          set -e
-
-          ./gradlew --version
 
       - name: Build release MTP
         working-directory: mt-plugin-v3-demo
@@ -821,7 +1471,7 @@ jobs:
 
           OUTPUT_DIR="mt-plugin-v3-demo/template/build/outputs/mt-plugin"
 
-          echo "===== MTP OUTPUT ====="
+          echo "===== GENERATED MTP ====="
 
           find \
             "${OUTPUT_DIR}" \
@@ -836,19 +1486,19 @@ jobs:
               "${OUTPUT_DIR}" \
               -maxdepth 2 \
               -type f \
-              -name "*.mtp" \
-              | wc -l
+              -name "*.mtp" |
+            wc -l
           )"
 
           if [ "${COUNT}" -eq 0 ]; then
-            echo "ERROR: No .mtp file was produced."
+            echo "ERROR: MTP was not generated."
             exit 1
           fi
 
       - name: Upload final MTP
         uses: actions/upload-artifact@v4
         with:
-          name: MT-Markdown-Preview-v2.0.0
+          name: MT-Markdown-Preview-v3.0.0
           path: |
             mt-plugin-v3-demo/template/build/outputs/mt-plugin/*.mtp
           if-no-files-found: error
