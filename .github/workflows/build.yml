@@ -3,9 +3,7 @@ name: Build MT Markdown Preview V3
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -23,11 +21,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
@@ -37,49 +34,66 @@ jobs:
           packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
 
       - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.13'
-          cache-read-only: false
+          cache-disabled: true
 
-      - name: Verify standalone project
+      - name: Verify standalone project files
         shell: bash
         run: |
           set -euxo pipefail
-          test -f "${GITHUB_WORKSPACE}/settings.gradle"
-          test -f "${GITHUB_WORKSPACE}/build.gradle"
-          test -f "${GITHUB_WORKSPACE}/gradle/libs.versions.toml"
-          test -f "${GITHUB_WORKSPACE}/gradle.properties"
-          test -f "${GITHUB_WORKSPACE}/template/build.gradle"
-          test -f "${GITHUB_WORKSPACE}/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
-          test -f "${GITHUB_WORKSPACE}/template/src/main/java/com/example/mtmarkdown/MarkdownRenderer.java"
-          grep -q 'mt-plugin = "3.0.0"' "${GITHUB_WORKSPACE}/gradle/libs.versions.toml"
-          grep -q 'agp = "8.13.2"' "${GITHUB_WORKSPACE}/gradle/libs.versions.toml"
-          grep -q 'markwon = "4.6.2"' "${GITHUB_WORKSPACE}/gradle/libs.versions.toml"
+          ROOT="${GITHUB_WORKSPACE}"
+          required=(
+            "$ROOT/settings.gradle"
+            "$ROOT/build.gradle"
+            "$ROOT/gradle.properties"
+            "$ROOT/gradle/libs.versions.toml"
+            "$ROOT/template/build.gradle"
+            "$ROOT/template/proguard-rules.pro"
+            "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
+            "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownRenderer.java"
+            "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownPreprocessor.java"
+            "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownGrammarRegistry.java"
+          )
+          for f in "${required[@]}"; do
+            test -f "$f"
+          done
+          grep -q 'mt-plugin = "3.0.0"' "$ROOT/gradle/libs.versions.toml"
+          grep -q 'agp = "8.13.2"' "$ROOT/gradle/libs.versions.toml"
+          grep -q 'markwon = "4.6.2"' "$ROOT/gradle/libs.versions.toml"
+          grep -q 'pluginID = '\''com.example.mtmarkdownpreview'\''' "$ROOT/template/build.gradle"
+          grep -q 'interfaces = ' "$ROOT/template/build.gradle"
+
+      - name: Inspect Gradle installation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -version
+          gradle --version
 
       - name: Resolve Gradle project
         shell: bash
         run: |
           set -euxo pipefail
-          gradle --version
           gradle --no-daemon --stacktrace projects
 
       - name: Build release MTP
         shell: bash
         run: |
           set -euxo pipefail
-          gradle template:packageReleaseMtp --stacktrace --no-daemon
+          gradle template:packageReleaseMtp --no-daemon --stacktrace
 
       - name: Verify MTP output
         shell: bash
         run: |
           set -euxo pipefail
           OUT="${GITHUB_WORKSPACE}/template/build/outputs/mt-plugin"
-          test -d "${OUT}"
-          find "${OUT}" -maxdepth 1 -type f -name '*.mtp' -print
-          MTP="$(find "${OUT}" -maxdepth 1 -type f -name '*.mtp' -print -quit)"
-          test -n "${MTP}"
-          test -s "${MTP}"
+          test -d "$OUT"
+          find "$OUT" -maxdepth 1 -type f -name '*.mtp' -print
+          MTP="$(find "$OUT" -maxdepth 1 -type f -name '*.mtp' -print -quit)"
+          test -n "$MTP"
+          test -s "$MTP"
 
       - name: Upload installable MTP
         uses: actions/upload-artifact@v4
