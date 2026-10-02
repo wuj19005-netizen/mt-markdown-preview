@@ -49,10 +49,12 @@ jobs:
       - name: Overlay this plugin project
         shell: bash
         run: |
-          rsync -a --exclude='.git/' --exclude='mt-plugin-v3-demo/' "./" "mt-plugin-v3-demo/"
-          test -f mt-plugin-v3-demo/gradlew
-          test -f mt-plugin-v3-demo/template/build.gradle
-          test -f mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java
+          set -euo pipefail
+          test -d "${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
+          git archive --format=tar HEAD | tar -xf - -C "${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
+          test -f "${GITHUB_WORKSPACE}/mt-plugin-v3-demo/gradlew"
+          test -f "${GITHUB_WORKSPACE}/mt-plugin-v3-demo/template/build.gradle"
+          test -f "${GITHUB_WORKSPACE}/mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
 
       - name: Build release MTP
         working-directory: mt-plugin-v3-demo
