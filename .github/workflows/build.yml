@@ -24,8 +24,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # setup-android@v3 can request the obsolete SDK "tools" package,
-      # which Google no longer serves. v4 removes that dependency.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -36,6 +34,7 @@ jobs:
       - name: Verify Android SDK
         shell: bash
         run: |
+          set -eu
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
           sdkmanager --version
           sdkmanager --list_installed | grep -E 'platform-tools|platforms;android-36|build-tools;35.0.0' || true
@@ -43,23 +42,58 @@ jobs:
       - name: Fetch MT Plugin V3 demo
         shell: bash
         run: |
-          rm -rf mt-plugin-v3-demo
-          git clone --depth 1 https://gitee.com/L-JINBIN/mt-plugin-v3-demo.git mt-plugin-v3-demo
-
-      - name: Overlay this plugin project
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d "${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
-          git archive --format=tar HEAD | tar -xf - -C "${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
+          set -eu
+          rm -rf "${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
+          git clone --depth 1 https://gitee.com/L-JINBIN/mt-plugin-v3-demo.git "${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
           test -f "${GITHUB_WORKSPACE}/mt-plugin-v3-demo/gradlew"
           test -f "${GITHUB_WORKSPACE}/mt-plugin-v3-demo/template/build.gradle"
-          test -f "${GITHUB_WORKSPACE}/mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
+
+      - name: Overlay plugin source
+        shell: bash
+        run: |
+          set -eux
+          DEMO_DIR="${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
+          SRC_DIR="${GITHUB_WORKSPACE}"
+
+          test -d "${DEMO_DIR}"
+          test -d "${SRC_DIR}/template"
+          test -f "${SRC_DIR}/template/build.gradle"
+
+          shopt -s dotglob nullglob
+          for item in "${SRC_DIR}"/*; do
+            base="$(basename "${item}")"
+            case "${base}" in
+              .git|mt-plugin-v3-demo)
+                continue
+                ;;
+            esac
+            rm -rf "${DEMO_DIR:?}/${base}"
+            cp -a "${item}" "${DEMO_DIR}/${base}"
+          done
+
+          for item in "${SRC_DIR}"/.[!.]*; do
+            [ -e "${item}" ] || continue
+            base="$(basename "${item}")"
+            case "${base}" in
+              .git)
+                continue
+                ;;
+            esac
+            rm -rf "${DEMO_DIR:?}/${base}"
+            cp -a "${item}" "${DEMO_DIR}/${base}"
+          done
+
+          test -f "${DEMO_DIR}/gradlew"
+          test -f "${DEMO_DIR}/template/build.gradle"
+          test -f "${DEMO_DIR}/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
+          test -f "${DEMO_DIR}/template/src/main/java/com/example/mtmarkdown/MarkdownRenderer.java"
+          test -f "${DEMO_DIR}/template/src/main/java/com/example/mtmarkdown/MarkdownPreprocessor.java"
 
       - name: Build release MTP
         working-directory: mt-plugin-v3-demo
         shell: bash
         run: |
+          set -eux
           chmod +x ./gradlew
           ./gradlew template:packageReleaseMtp --stacktrace --no-daemon
 
@@ -67,8 +101,11 @@ jobs:
         working-directory: mt-plugin-v3-demo
         shell: bash
         run: |
-          find template/build/outputs/mt-plugin -maxdepth 1 -type f -name '*.mtp' -print
-          test -n "$(find template/build/outputs/mt-plugin -maxdepth 1 -type f -name '*.mtp' -print -quit)"
+          set -eux
+          OUT="template/build/outputs/mt-plugin"
+          test -d "${OUT}"
+          find "${OUT}" -maxdepth 1 -type f -name '*.mtp' -print
+          test -n "$(find "${OUT}" -maxdepth 1 -type f -name '*.mtp' -print -quit)"
 
       - name: Upload installable MTP
         uses: actions/upload-artifact@v4
