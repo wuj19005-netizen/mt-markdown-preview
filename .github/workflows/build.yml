@@ -63,7 +63,7 @@ jobs:
 
           cat /tmp/android-sdk-licenses.log
 
-      - name: Verify Java and Android environment
+      - name: Verify Android environment
         shell: bash
         run: |
           set -e
@@ -72,27 +72,21 @@ jobs:
           java -version
 
           echo
-          echo "===== JAVA_HOME ====="
-          echo "${JAVA_HOME}"
+          echo "===== SDK ====="
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
 
           echo
-          echo "===== ANDROID_SDK_ROOT ====="
-          echo "${ANDROID_SDK_ROOT}"
-
-          echo
-          echo "===== SDK MANAGER ====="
+          echo "===== SDKMANAGER ====="
           command -v sdkmanager
           sdkmanager --version
 
           echo
-          echo "===== ANDROID PLATFORM 36 ====="
+          echo "===== PLATFORM ====="
           test -d "${ANDROID_SDK_ROOT}/platforms/android-36"
-          ls -la "${ANDROID_SDK_ROOT}/platforms/android-36"
 
           echo
-          echo "===== BUILD TOOLS 36.0.0 ====="
+          echo "===== BUILD TOOLS ====="
           test -d "${ANDROID_SDK_ROOT}/build-tools/36.0.0"
-          ls -la "${ANDROID_SDK_ROOT}/build-tools/36.0.0"
 
       - name: Detect MT MaterialIcons import
         shell: bash
@@ -109,11 +103,13 @@ jobs:
 
           if [ -z "${MATERIAL_IMPORT}" ]; then
             echo "ERROR: MaterialIcons import not found."
+
             grep -R \
               "MaterialIcons" \
               mt-plugin-v3-demo \
               2>/dev/null \
               | head -n 100 || true
+
             exit 1
           fi
 
@@ -132,12 +128,6 @@ jobs:
           echo "MATERIAL_IMPORT=${MATERIAL_IMPORT}" >> "${GITHUB_ENV}"
           echo "MATERIAL_ICON_EXPR=${MATERIAL_ICON_EXPR}" >> "${GITHUB_ENV}"
 
-          echo "Detected MaterialIcons import:"
-          echo "${MATERIAL_IMPORT}"
-
-          echo "Detected MaterialIcons expression:"
-          echo "${MATERIAL_ICON_EXPR}"
-
       - name: Inject Markdown renderer
         shell: bash
         run: |
@@ -146,6 +136,7 @@ jobs:
           SRC="mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown"
           ENGINE="${SRC}/engine"
 
+          rm -rf "${SRC}"
           mkdir -p "${ENGINE}"
 
           cat > "${SRC}/MarkdownHtml.java" <<'JAVA'
@@ -181,6 +172,9 @@ jobs:
               private static String normalize(String html) {
                   String result = html;
 
+                  /*
+                   * Task list.
+                   */
                   result = result.replaceAll(
                           "(?is)<input[^>]*type=[\\\"']checkbox[\\\"'][^>]*checked[^>]*>",
                           "☑ "
@@ -191,6 +185,9 @@ jobs:
                           "☐ "
                   );
 
+                  /*
+                   * Images.
+                   */
                   result = result.replaceAll(
                           "(?is)<img[^>]*alt=[\\\"']([^\\\"']*)[\\\"'][^>]*>",
                           "<i>[图片: $1]</i>"
@@ -201,6 +198,9 @@ jobs:
                           "<i>[图片]</i>"
                   );
 
+                  /*
+                   * Code blocks.
+                   */
                   result = result.replace(
                           "<pre>",
                           "<br><tt><small>"
@@ -221,6 +221,9 @@ jobs:
                           "</tt>"
                   );
 
+                  /*
+                   * Tables.
+                   */
                   result = result.replaceAll(
                           "(?i)<tr[^>]*>",
                           ""
@@ -241,6 +244,9 @@ jobs:
                           ""
                   );
 
+                  /*
+                   * GFM Alerts.
+                   */
                   result = result.replaceAll(
                           "(?is)<blockquote[^>]*class=[\\\"'][^\\\"']*markdown-alert-note[^\\\"']*[\\\"'][^>]*>",
                           "<br><b>提示</b><br>"
@@ -372,6 +378,7 @@ jobs:
           import bin.mt.plugin.api.editor.BaseTextEditorToolMenu;
           import bin.mt.plugin.api.editor.TextEditor;
           import bin.mt.plugin.api.ui.PluginUI;
+          import bin.mt.plugin.api.ui.PluginView;
 
           ${MATERIAL_IMPORT}
 
@@ -427,8 +434,15 @@ jobs:
                       TextEditor editor
               ) {
 
-                  final String markdown =
-                          readMarkdown(editor);
+                  final String markdown;
+
+                  try {
+                      markdown =
+                              readMarkdown(editor);
+                  } catch (Throwable e) {
+                      pluginUI.showErrorMessage(e);
+                      return;
+                  }
 
                   if (markdown == null ||
                           markdown.trim().isEmpty()) {
@@ -524,36 +538,35 @@ jobs:
                                                           html
                                                   );
 
+                                  /*
+                                   * 所有 UI 操作都回到主线程。
+                                   */
                                   mainHandler.post(
-                                          () ->
+                                          () -> {
+
+                                              try {
                                                   showPreview(
                                                           pluginUI,
-                                                          content
-                                                  )
+                                                          content,
+                                                          html
+                                                  );
+                                              } catch (Throwable e) {
+                                                  pluginUI
+                                                          .showErrorMessage(
+                                                                  e
+                                                          );
+                                              }
+                                          }
                                   );
 
                               } catch (Throwable error) {
 
-                                  String message =
-                                          error.getMessage();
-
-                                  if (message == null ||
-                                          message.isEmpty()) {
-
-                                      message =
-                                              error.getClass()
-                                                      .getSimpleName();
-                                  }
-
-                                  final String
-                                          finalMessage =
-                                          message;
-
                                   mainHandler.post(
                                           () ->
-                                                  pluginUI.showErrorMessage(
-                                                          error
-                                                  )
+                                                  pluginUI
+                                                          .showErrorMessage(
+                                                                  error
+                                                          )
                                   );
                               }
                           }
@@ -562,15 +575,40 @@ jobs:
 
               private void showPreview(
                       PluginUI pluginUI,
-                      Spanned content
+                      Spanned content,
+                      String html
               ) {
 
-                  pluginUI.showMessage(
-                          "Markdown 预览 · "
-                                  + rendererEngine
-                                          .versionName(),
-                          content
-                  );
+                  /*
+                   * 使用官方 PluginView + Dialog。
+                   *
+                   * 不改变编辑器原文。
+                   * 预览内容显示在独立对话框中。
+                   */
+                  PluginView view =
+                          pluginUI
+                                  .buildVerticalLayout()
+                                  .addTextView(
+                                          "rendered"
+                                  )
+                                  .text(content)
+                                  .paddingDp(16)
+                                  .widthMatchParent()
+                                  .build();
+
+                  pluginUI
+                          .buildDialog()
+                          .setTitle(
+                                  "Markdown 预览 · "
+                                          + rendererEngine
+                                                  .versionName()
+                          )
+                          .setView(view)
+                          .setPositiveButton(
+                                  "关闭",
+                                  null
+                          )
+                          .show();
               }
           }
           JAVA
@@ -591,6 +629,9 @@ jobs:
               encoding="utf-8"
           )
 
+          # --------------------------------------------------------
+          # Replace mtPlugin block.
+          # --------------------------------------------------------
           marker = "mtPlugin"
           start = text.find(marker)
 
@@ -636,8 +677,8 @@ jobs:
           new_block = """
           mtPlugin {
               pluginID = "com.example.mtmarkdownpreview"
-              versionCode = 3
-              versionName = "v1.2.0"
+              versionCode = 4
+              versionName = "v1.3.0"
               name = "Markdown 预览"
               description = "MT 管理器 Markdown 预览与渲染引擎升级插件"
 
@@ -653,6 +694,9 @@ jobs:
               + text[end:]
           )
 
+          # --------------------------------------------------------
+          # CommonMark dependencies.
+          # --------------------------------------------------------
           dependencies = """
                   implementation "org.commonmark:commonmark:0.30.0"
                   implementation "org.commonmark:commonmark-ext-gfm-tables:0.30.0"
@@ -692,9 +736,7 @@ jobs:
                       text[:dependencies_brace + 1]
                       + "\n"
                       + dependencies
-                      + text[
-                          dependencies_brace + 1:
-                      ]
+                      + text[dependencies_brace + 1:]
                   )
 
           path.write_text(
@@ -703,33 +745,33 @@ jobs:
           )
           PY
 
-      - name: Verify generated plugin
+      - name: Verify generated source
         shell: bash
         run: |
           set -e
 
-          echo "===== BUILD GRADLE ====="
+          echo "===== BUILD.GRADLE ====="
 
-          sed -n '1,380p' \
+          sed -n '1,400p' \
             mt-plugin-v3-demo/template/build.gradle
 
           echo
-          echo "===== MENU JAVA ====="
+          echo "===== MarkdownPreviewToolMenu.java ====="
 
-          sed -n '1,420p' \
+          sed -n '1,460p' \
             mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java
 
           echo
-          echo "===== ENGINE JAVA ====="
+          echo "===== MarkdownHtml.java ====="
 
-          sed -n '1,340p' \
-            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/engine/CommonMarkRendererEngine.java
+          sed -n '1,360p' \
+            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownHtml.java
 
           echo
-          echo "===== HTML JAVA ====="
+          echo "===== CommonMarkRendererEngine.java ====="
 
-          sed -n '1,340p' \
-            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownHtml.java
+          sed -n '1,360p' \
+            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/engine/CommonMarkRendererEngine.java
 
       - name: Prepare Gradle
         working-directory: mt-plugin-v3-demo
@@ -774,7 +816,7 @@ jobs:
       - name: Upload MTP
         uses: actions/upload-artifact@v4
         with:
-          name: MT-Markdown-Preview-v1.2.0
+          name: MT-Markdown-Preview-v1.3.0
           path: |
             mt-plugin-v3-demo/template/build/outputs/mt-plugin/*.mtp
           if-no-files-found: error
