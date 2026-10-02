@@ -245,11 +245,21 @@ jobs:
           s = s.replace('description = "{plugin_description}"', 'description = "MT 管理器 Markdown 预览与渲染引擎升级插件"')
           s = s.replace('mainPreference = "com.example.myplugin.MyPreference"\n', '')
           s = s.replace('// "com.example.myplugin.MyFunctionInterface",', '"com.example.mtmarkdown.MarkdownPreviewToolMenu",')
-          marker = 'dependencies {\n        coreLibraryDesugaring libs.desugar.jdk.libs\n'
-          deps = '''dependencies {\n        coreLibraryDesugaring libs.desugar.jdk.libs\n        implementation "org.commonmark:commonmark:0.30.0"\n        implementation "org.commonmark:commonmark-ext-gfm-tables:0.30.0"\n        implementation "org.commonmark:commonmark-ext-gfm-strikethrough:0.30.0"\n        implementation "org.commonmark:commonmark-ext-task-list-items:0.30.0"\n        implementation "org.commonmark:commonmark-ext-autolink:0.30.0"\n        implementation "org.commonmark:commonmark-ext-footnotes:0.30.0"\n        implementation "org.commonmark:commonmark-ext-gfm-alerts:0.30.0"\n'''
-          if marker not in s:
-              raise SystemExit('dependencies marker not found')
-          s = s.replace(marker, deps, 1)
+          
+          deps = '''
+                  implementation "org.commonmark:commonmark:0.30.0"
+                  implementation "org.commonmark:commonmark-ext-gfm-tables:0.30.0"
+                  implementation "org.commonmark:commonmark-ext-gfm-strikethrough:0.30.0"
+                  implementation "org.commonmark:commonmark-ext-task-list-items:0.30.0"
+                  implementation "org.commonmark:commonmark-ext-autolink:0.30.0"
+                  implementation "org.commonmark:commonmark-ext-footnotes:0.30.0"
+                  implementation "org.commonmark:commonmark-ext-gfm-alerts:0.30.0"
+          '''
+          if 'dependencies {' in s:
+              s = s.replace('dependencies {', 'dependencies {' + deps, 1)
+          else:
+              raise SystemExit('dependencies block not found')
+          
           p.write_text(s, encoding='utf-8')
           PY
 
