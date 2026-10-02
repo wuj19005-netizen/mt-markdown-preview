@@ -17,24 +17,59 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Prepare Android SDK 36
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
         shell: bash
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null 2>&1 || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36"
+          set -e
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-36"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
       - name: Clone official MT V3 template
         shell: bash
         run: |
-          git clone --depth=1 https://gitee.com/L-JINBIN/mt-plugin-v3-demo.git mt-plugin-v3-demo
+          set -e
+          git clone --depth=1 --branch=main \
+            https://gitee.com/L-JINBIN/mt-plugin-v3-demo.git \
+            mt-plugin-v3-demo
+
+      - name: Detect MT MaterialIcons import
+        shell: bash
+        run: |
+          set -e
+
+          MATERIAL_IMPORT="$(
+            grep -Rho \
+              '^import [^;]*MaterialIcons;' \
+              mt-plugin-v3-demo \
+              2>/dev/null \
+              | head -n 1 || true
+          )"
+
+          if [ -z "$MATERIAL_IMPORT" ]; then
+            echo "ERROR: Cannot find MaterialIcons import in official MT V3 demo."
+            echo "Search result:"
+            grep -R "MaterialIcons" mt-plugin-v3-demo 2>/dev/null | head -n 30 || true
+            exit 1
+          fi
+
+          echo "Detected: $MATERIAL_IMPORT"
+          echo "MATERIAL_IMPORT=$MATERIAL_IMPORT" >> "$GITHUB_ENV"
 
       - name: Inject Markdown Preview plugin
         shell: bash
         run: |
           set -e
-          mkdir -p mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/engine
 
-          cat > mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownHtml.java <<'JAVA'
+          SRC="mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown"
+          ENGINE="$SRC/engine"
+
+          mkdir -p "$ENGINE"
+
+          cat > "$SRC/MarkdownHtml.java" <<'JAVA'
           package com.example.mtmarkdown;
 
           import android.os.Build;
@@ -42,45 +77,112 @@ jobs:
           import android.text.Spanned;
 
           public final class MarkdownHtml {
-              private MarkdownHtml() {}
+
+              private MarkdownHtml() {
+              }
 
               public static Spanned fromHtml(String html) {
-                  String safe = normalize(html);
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                      return Html.fromHtml(safe, Html.FROM_HTML_MODE_LEGACY);
+                  if (html == null || html.isEmpty()) {
+                      return Html.fromHtml("");
                   }
+
+                  String safe = normalize(html);
+
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                      return Html.fromHtml(
+                              safe,
+                              Html.FROM_HTML_MODE_LEGACY
+                      );
+                  }
+
                   //noinspection deprecation
                   return Html.fromHtml(safe);
               }
 
               private static String normalize(String html) {
-                  if (html == null || html.isEmpty()) return Html.fromHtml("").toString().length() == 0 ? "" : html;
                   String result = html;
-                  result = result.replaceAll("(?is)<img[^>]*alt=[\\\"']([^\\\"']*)[\\\"'][^>]*>", "<i>[图片: $1]</i>");
-                  result = result.replaceAll("(?is)<img[^>]*>", "<i>[图片]</i>");
-                  result = result.replace("<pre>", "<br><tt><small>");
-                  result = result.replace("</pre>", "</small></tt><br>");
-                  result = result.replace("<code>", "<tt>");
-                  result = result.replace("</code>", "</tt>");
-                  result = result.replaceAll("(?i)<tr[^>]*>", "");
-                  result = result.replaceAll("(?i)</tr>", "<br>");
-                  result = result.replaceAll("(?i)</?(th|td)[^>]*>", " | ");
-                  result = result.replaceAll("(?i)</?(thead|tbody|tfoot|table)[^>]*>", "");
+
+                  // Markdown checkbox -> readable text.
+                  result = result.replaceAll(
+                          "(?is)<input[^>]*type=[\\\"']checkbox[\\\"'][^>]*checked[^>]*>",
+                          "[x] "
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)<input[^>]*type=[\\\"']checkbox[\\\"'][^>]*>",
+                          "[ ] "
+                  );
+
+                  // Images become readable placeholders.
+                  result = result.replaceAll(
+                          "(?is)<img[^>]*alt=[\\\"']([^\\\"']*)[\\\"'][^>]*>",
+                          "<i>[图片: $1]</i>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)<img[^>]*>",
+                          "<i>[图片]</i>"
+                  );
+
+                  // Code blocks.
+                  result = result.replace(
+                          "<pre>",
+                          "<br><tt><small>"
+                  );
+
+                  result = result.replace(
+                          "</pre>",
+                          "</small></tt><br>"
+                  );
+
+                  result = result.replace(
+                          "<code>",
+                          "<tt>"
+                  );
+
+                  result = result.replace(
+                          "</code>",
+                          "</tt>"
+                  );
+
+                  // Basic table fallback for Android Html.
+                  result = result.replaceAll(
+                          "(?i)<tr[^>]*>",
+                          ""
+                  );
+
+                  result = result.replaceAll(
+                          "(?i)</tr>",
+                          "<br>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?i)</?(th|td)[^>]*>",
+                          " | "
+                  );
+
+                  result = result.replaceAll(
+                          "(?i)</?(thead|tbody|tfoot|table)[^>]*>",
+                          ""
+                  );
+
                   return result;
               }
           }
           JAVA
 
-          cat > mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/engine/MarkdownRendererEngine.java <<'JAVA'
+          cat > "$ENGINE/MarkdownRendererEngine.java" <<'JAVA'
           package com.example.mtmarkdown.engine;
 
           public interface MarkdownRendererEngine {
+
               String renderToHtml(String markdown);
+
               String versionName();
           }
           JAVA
 
-          cat > mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/engine/CommonMarkRendererEngine.java <<'JAVA'
+          cat > "$ENGINE/CommonMarkRendererEngine.java" <<'JAVA'
           package com.example.mtmarkdown.engine;
 
           import org.commonmark.Extension;
@@ -97,7 +199,9 @@ jobs:
           import java.util.Arrays;
           import java.util.List;
 
-          public final class CommonMarkRendererEngine implements MarkdownRendererEngine {
+          public final class CommonMarkRendererEngine
+                  implements MarkdownRendererEngine {
+
               private final Parser parser;
               private final HtmlRenderer renderer;
 
@@ -110,7 +214,11 @@ jobs:
                           FootnotesExtension.create(),
                           AlertsExtension.create()
                   );
-                  parser = Parser.builder().extensions(extensions).build();
+
+                  parser = Parser.builder()
+                          .extensions(extensions)
+                          .build();
+
                   renderer = HtmlRenderer.builder()
                           .extensions(extensions)
                           .escapeHtml(true)
@@ -120,7 +228,10 @@ jobs:
 
               @Override
               public String renderToHtml(String markdown) {
-                  if (markdown == null || markdown.isEmpty()) return "<p></p>";
+                  if (markdown == null || markdown.isEmpty()) {
+                      return "<p></p>";
+                  }
+
                   Node document = parser.parse(markdown);
                   return renderer.render(document);
               }
@@ -132,7 +243,7 @@ jobs:
           }
           JAVA
 
-          cat > mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java <<'JAVA'
+          cat > "$SRC/MarkdownPreviewToolMenu.java" <<JAVA
           package com.example.mtmarkdown;
 
           import android.graphics.drawable.Drawable;
@@ -151,16 +262,28 @@ jobs:
           import bin.mt.plugin.api.ui.PluginUI;
           import bin.mt.plugin.api.ui.PluginView;
 
-          public final class MarkdownPreviewToolMenu extends BaseTextEditorToolMenu {
-              private static final int MAX_PREVIEW_CHARS = 300_000;
+          $MATERIAL_IMPORT
 
-              private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-                  Thread thread = new Thread(r, "mt-markdown-renderer");
-                  thread.setDaemon(true);
-                  return thread;
-              });
-              private final Handler mainHandler = new Handler(Looper.getMainLooper());
-              private final MarkdownRendererEngine rendererEngine = new CommonMarkRendererEngine();
+          public final class MarkdownPreviewToolMenu
+                  extends BaseTextEditorToolMenu {
+
+              private static final int MAX_PREVIEW_CHARS = 300000;
+
+              private final ExecutorService executor =
+                      Executors.newSingleThreadExecutor(r -> {
+                          Thread thread = new Thread(
+                                  r,
+                                  "mt-markdown-renderer"
+                          );
+                          thread.setDaemon(true);
+                          return thread;
+                      });
+
+              private final Handler mainHandler =
+                      new Handler(Looper.getMainLooper());
+
+              private final MarkdownRendererEngine rendererEngine =
+                      new CommonMarkRendererEngine();
 
               @Override
               public String name() {
@@ -169,7 +292,7 @@ jobs:
 
               @Override
               public Drawable icon() {
-                  return null;
+                  return MaterialIcons.get("description");
               }
 
               @Override
@@ -178,74 +301,177 @@ jobs:
               }
 
               @Override
-              public void onMenuClick(PluginUI pluginUI, TextEditor editor) {
+              public void onMenuClick(
+                      PluginUI pluginUI,
+                      TextEditor editor
+              ) {
                   final String markdown = readMarkdown(editor);
-                  if (markdown == null || markdown.trim().isEmpty()) {
-                      pluginUI.showToast("没有可预览的 Markdown 内容");
+
+                  if (markdown == null ||
+                          markdown.trim().isEmpty()) {
+
+                      pluginUI.showToast(
+                              "没有可预览的 Markdown 内容"
+                      );
                       return;
                   }
 
                   if (markdown.length() > MAX_PREVIEW_CHARS) {
                       pluginUI.buildDialog()
                               .setTitle("Markdown 预览")
-                              .setMessage("当前内容超过 300000 个字符，本次仅渲染前 300000 个字符。")
-                              .setPositiveButton("继续", (dialog, which) -> renderAsync(pluginUI, markdown.substring(0, MAX_PREVIEW_CHARS)))
-                              .setNegativeButton("取消", null)
+                              .setMessage(
+                                      "当前内容超过 300000 个字符，"
+                                              + "本次仅渲染前 300000 个字符。"
+                              )
+                              .setPositiveButton(
+                                      "继续",
+                                      (dialog, which) ->
+                                              renderAsync(
+                                                      pluginUI,
+                                                      markdown.substring(
+                                                              0,
+                                                              MAX_PREVIEW_CHARS
+                                                      )
+                                              )
+                              )
+                              .setNegativeButton(
+                                      "取消",
+                                      null
+                              )
                               .show();
+
                       return;
                   }
+
                   renderAsync(pluginUI, markdown);
               }
 
               private String readMarkdown(TextEditor editor) {
                   int start = editor.getSelectionStart();
                   int end = editor.getSelectionEnd();
-                  if (start != end) return editor.subText(start, end);
-                  return editor.subText(0, editor.length());
+
+                  if (start != end) {
+                      return editor.subText(start, end);
+                  }
+
+                  return editor.subText(
+                          0,
+                          editor.length()
+                  );
               }
 
-              private void renderAsync(PluginUI pluginUI, String markdown) {
-                  pluginUI.showToast("正在渲染 Markdown…");
+              private void renderAsync(
+                      PluginUI pluginUI,
+                      String markdown
+              ) {
+                  pluginUI.showToast(
+                          "正在渲染 Markdown…"
+                  );
+
                   executor.execute(() -> {
                       try {
-                          final String html = rendererEngine.renderToHtml(markdown);
-                          final Spanned spanned = MarkdownHtml.fromHtml(html);
-                          mainHandler.post(() -> showPreview(pluginUI, spanned));
+                          String html =
+                                  rendererEngine.renderToHtml(
+                                          markdown
+                                  );
+
+                          Spanned spanned =
+                                  MarkdownHtml.fromHtml(html);
+
+                          mainHandler.post(
+                                  () -> showPreview(
+                                          pluginUI,
+                                          spanned
+                                  )
+                          );
+
                       } catch (Throwable error) {
-                          mainHandler.post(() -> pluginUI.showToast("Markdown 渲染失败: " + error.getMessage()));
+                          mainHandler.post(
+                                  () -> pluginUI.showToast(
+                                          "Markdown 渲染失败: "
+                                                  + error.getMessage()
+                                  )
+                          );
                       }
                   });
               }
 
-              private void showPreview(PluginUI pluginUI, Spanned content) {
-                  PluginView view = pluginUI.buildVerticalLayout()
-                          .addTextView("content")
-                          .text(content)
-                          .paddingDp(12)
-                          .widthMatchParent()
-                          .build();
+              private void showPreview(
+                      PluginUI pluginUI,
+                      Spanned content
+              ) {
+                  PluginView view =
+                          pluginUI
+                                  .buildVerticalLayout()
+                                  .addTextView("content")
+                                  .text(content)
+                                  .paddingDp(12)
+                                  .widthMatchParent()
+                                  .build();
 
-                  pluginUI.buildDialog()
-                          .setTitle("Markdown 预览 · " + rendererEngine.versionName())
+                  pluginUI
+                          .buildDialog()
+                          .setTitle(
+                                  "Markdown 预览 · "
+                                          + rendererEngine.versionName()
+                          )
                           .setView(view)
-                          .setPositiveButton("关闭", null)
+                          .setPositiveButton(
+                                  "关闭",
+                                  null
+                          )
                           .show();
               }
           }
           JAVA
 
+      - name: Configure MT plugin
+        shell: bash
+        run: |
+          set -e
+
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('mt-plugin-v3-demo/template/build.gradle')
-          s = p.read_text(encoding='utf-8')
-          s = s.replace('pluginID = "com.example.myplugin"', 'pluginID = "com.example.mtmarkdownpreview"')
-          s = s.replace('versionName = "v1.0"', 'versionName = "v1.0.0"')
-          s = s.replace('name = "{plugin_name}"', 'name = "Markdown 预览"')
-          s = s.replace('description = "{plugin_description}"', 'description = "MT 管理器 Markdown 预览与渲染引擎升级插件"')
-          s = s.replace('mainPreference = "com.example.myplugin.MyPreference"\n', '')
-          s = s.replace('// "com.example.myplugin.MyFunctionInterface",', '"com.example.mtmarkdown.MarkdownPreviewToolMenu",')
-          
-          deps = '''
+          import re
+
+          path = Path(
+              "mt-plugin-v3-demo/template/build.gradle"
+          )
+
+          text = path.read_text(
+              encoding="utf-8"
+          )
+
+          mt_plugin_block = '''
+          mtPlugin {
+              pluginID = "com.example.mtmarkdownpreview"
+              versionCode = 1
+              versionName = "v1.0.0"
+              name = "Markdown 预览"
+              description = "MT 管理器 Markdown 预览与渲染引擎升级插件"
+
+              interfaces = [
+                  "com.example.mtmarkdown.MarkdownPreviewToolMenu"
+              ]
+          }
+          '''.strip()
+
+          pattern = re.compile(
+              r'(?ms)^mtPlugin\\s*\\{.*?^\\}'
+          )
+
+          text, count = pattern.subn(
+              mt_plugin_block,
+              text,
+              count=1
+          )
+
+          if count == 0:
+              raise SystemExit(
+                  "ERROR: mtPlugin { } block not found."
+              )
+
+          dependencies = '''
                   implementation "org.commonmark:commonmark:0.30.0"
                   implementation "org.commonmark:commonmark-ext-gfm-tables:0.30.0"
                   implementation "org.commonmark:commonmark-ext-gfm-strikethrough:0.30.0"
@@ -253,25 +479,85 @@ jobs:
                   implementation "org.commonmark:commonmark-ext-autolink:0.30.0"
                   implementation "org.commonmark:commonmark-ext-footnotes:0.30.0"
                   implementation "org.commonmark:commonmark-ext-gfm-alerts:0.30.0"
-          '''
-          if 'dependencies {' in s:
-              s = s.replace('dependencies {', 'dependencies {' + deps, 1)
-          else:
-              raise SystemExit('dependencies block not found')
-          
-          p.write_text(s, encoding='utf-8')
+          '''.strip()
+
+          if "org.commonmark:commonmark:0.30.0" not in text:
+
+              dependencies_pattern = re.compile(
+                  r'^(\\s*dependencies\\s*\\{)',
+                  re.MULTILINE
+              )
+
+              match = dependencies_pattern.search(text)
+
+              if match:
+                  insertion = (
+                      match.group(1)
+                      + "\\n"
+                      + dependencies
+                  )
+
+                  text = (
+                      text[:match.start()]
+                      + insertion
+                      + text[match.end():]
+                  )
+
+              else:
+                  text += (
+                      "\\n\\ndependencies {\\n"
+                      + dependencies
+                      + "\\n}\\n"
+                  )
+
+          path.write_text(
+              text,
+              encoding="utf-8"
+          )
           PY
+
+      - name: Show final plugin configuration
+        shell: bash
+        run: |
+          echo "===== template/build.gradle ====="
+          sed -n '1,240p' \
+            mt-plugin-v3-demo/template/build.gradle
+
+          echo
+          echo "===== MarkdownPreviewToolMenu.java ====="
+          sed -n '1,280p' \
+            mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java
 
       - name: Build release MTP
         shell: bash
         working-directory: mt-plugin-v3-demo
         run: |
+          set -e
           chmod +x ./gradlew
-          ./gradlew template:packageReleaseMtp --stacktrace
+
+          ./gradlew \
+            template:packageReleaseMtp \
+            --stacktrace \
+            --no-daemon
+
+      - name: List generated files
+        shell: bash
+        run: |
+          set -e
+
+          echo "===== generated mt-plugin files ====="
+
+          find \
+            mt-plugin-v3-demo/template/build/outputs/mt-plugin \
+            -maxdepth 1 \
+            -type f \
+            -print \
+            -exec ls -lh {} \;
 
       - name: Upload MTP
         uses: actions/upload-artifact@v4
         with:
           name: MT-Markdown-Preview-v1.0.0
-          path: mt-plugin-v3-demo/template/build/outputs/mt-plugin/*.mtp
+          path: |
+            mt-plugin-v3-demo/template/build/outputs/mt-plugin/*.mtp
           if-no-files-found: error
