@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Clone official MT V3 template
         shell: bash
@@ -28,12 +28,12 @@ jobs:
             mt-plugin-v3-demo
 
       - name: Setup Java 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK tools
         uses: android-actions/setup-android@v4
         with:
           packages: ''
@@ -59,9 +59,34 @@ jobs:
           yes | sdkmanager \
             --sdk_root="${ANDROID_SDK_ROOT}" \
             --licenses \
-            >/tmp/licenses.log 2>&1 || true
+            >/tmp/android-sdk-licenses.log 2>&1 || true
 
-          cat /tmp/licenses.log
+          cat /tmp/android-sdk-licenses.log
+
+      - name: Verify environment
+        shell: bash
+        run: |
+          set -e
+
+          echo "===== JAVA ====="
+          java -version
+
+          echo
+          echo "===== ANDROID SDK ====="
+          echo "${ANDROID_SDK_ROOT}"
+
+          echo
+          echo "===== SDKMANAGER ====="
+          command -v sdkmanager
+          sdkmanager --version
+
+          echo
+          echo "===== PLATFORM 36 ====="
+          test -d "${ANDROID_SDK_ROOT}/platforms/android-36"
+
+          echo
+          echo "===== BUILD TOOLS 36.0.0 ====="
+          test -d "${ANDROID_SDK_ROOT}/build-tools/36.0.0"
 
       - name: Detect MaterialIcons
         shell: bash
@@ -77,7 +102,7 @@ jobs:
           )"
 
           if [ -z "${MATERIAL_IMPORT}" ]; then
-            echo "MaterialIcons import not found."
+            echo "ERROR: MaterialIcons import not found."
             grep -R \
               "MaterialIcons" \
               mt-plugin-v3-demo \
@@ -95,13 +120,13 @@ jobs:
           )"
 
           if [ -z "${MATERIAL_ICON_EXPR}" ]; then
-            MATERIAL_ICON_EXPR='MaterialIcons.get("preview")'
+            MATERIAL_ICON_EXPR='MaterialIcons.get("description")'
           fi
 
           echo "MATERIAL_IMPORT=${MATERIAL_IMPORT}" >> "${GITHUB_ENV}"
           echo "MATERIAL_ICON_EXPR=${MATERIAL_ICON_EXPR}" >> "${GITHUB_ENV}"
 
-      - name: Create Markdown source
+      - name: Create Markdown renderer
         shell: bash
         run: |
           set -e
@@ -172,12 +197,11 @@ jobs:
               }
 
               @Override
-              public String renderToHtml(
-                      String markdown
-              ) {
+              public String renderToHtml(String markdown) {
 
                   if (markdown == null ||
                           markdown.isEmpty()) {
+
                       return "<p></p>";
                   }
 
@@ -193,6 +217,13 @@ jobs:
               }
           }
           JAVA
+
+      - name: Create Android rich text converter
+        shell: bash
+        run: |
+          set -e
+
+          SRC="mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown"
 
           cat > "${SRC}/MarkdownHtml.java" <<'JAVA'
           package com.example.mtmarkdown;
@@ -211,7 +242,7 @@ jobs:
               ) {
 
                   if (html == null ||
-                          html.isEmpty()) {
+                          html.trim().isEmpty()) {
 
                       return Html.fromHtml("");
                   }
@@ -235,14 +266,57 @@ jobs:
               }
 
               private static String normalize(
-                      String html
+                      String source
               ) {
 
-                  String result = html;
+                  String result = source;
 
                   /*
-                   * Task list.
+                   * -------------------------------------------------
+                   * Headings
+                   *
+                   * Don't rely completely on Android's handling of
+                   * <h1>-<h6>. Convert them to tags that
+                   * Html.fromHtml() handles consistently.
+                   * -------------------------------------------------
                    */
+
+                  result = result.replaceAll(
+                          "(?is)<h1[^>]*>(.*?)</h1>",
+                          "<br><big><big><b>$1</b></big></big><br>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)<h2[^>]*>(.*?)</h2>",
+                          "<br><big><b>$1</b></big><br>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)<h3[^>]*>(.*?)</h3>",
+                          "<br><big><b>$1</b></big><br>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)<h4[^>]*>(.*?)</h4>",
+                          "<br><b>$1</b><br>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)<h5[^>]*>(.*?)</h5>",
+                          "<br><b>$1</b><br>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)<h6[^>]*>(.*?)</h6>",
+                          "<br><b>$1</b><br>"
+                  );
+
+                  /*
+                   * -------------------------------------------------
+                   * Task list
+                   * -------------------------------------------------
+                   */
+
                   result = result.replaceAll(
                           "(?is)<input[^>]*type=[\\\"']checkbox[\\\"'][^>]*checked[^>]*>",
                           "☑ "
@@ -254,8 +328,11 @@ jobs:
                   );
 
                   /*
-                   * Images.
+                   * -------------------------------------------------
+                   * Images
+                   * -------------------------------------------------
                    */
+
                   result = result.replaceAll(
                           "(?is)<img[^>]*alt=[\\\"']([^\\\"']*)[\\\"'][^>]*>",
                           "<i>[图片: $1]</i>"
@@ -267,8 +344,48 @@ jobs:
                   );
 
                   /*
-                   * GFM alert labels.
+                   * -------------------------------------------------
+                   * Code
+                   * -------------------------------------------------
                    */
+
+                  result = result.replaceAll(
+                          "(?is)<pre[^>]*>",
+                          "<br><tt><small>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)</pre>",
+                          "</small></tt><br>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)<code>",
+                          "<tt>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)</code>",
+                          "</tt>"
+                  );
+
+                  /*
+                   * -------------------------------------------------
+                   * Blockquote
+                   * -------------------------------------------------
+                   */
+
+                  result = result.replaceAll(
+                          "(?is)<blockquote[^>]*>",
+                          "<br><b>│ </b>"
+                  );
+
+                  /*
+                   * -------------------------------------------------
+                   * GFM Alerts
+                   * -------------------------------------------------
+                   */
+
                   result = result.replaceAll(
                           "(?is)<blockquote[^>]*class=[\\\"'][^\\\"']*markdown-alert-note[^\\\"']*[\\\"'][^>]*>",
                           "<br><b>提示</b><br>"
@@ -295,41 +412,65 @@ jobs:
                   );
 
                   /*
-                   * Tables:
-                   * Android Html.fromHtml() 对 table 支持有限，
-                   * 转成普通文本避免整块消失。
+                   * -------------------------------------------------
+                   * Tables
+                   * -------------------------------------------------
+                   *
+                   * Android Html.fromHtml() doesn't provide a real
+                   * table layout, so preserve the cells visibly.
+                   * -------------------------------------------------
                    */
+
                   result = result.replaceAll(
-                          "(?i)<tr[^>]*>",
+                          "(?is)<table[^>]*>",
                           ""
                   );
 
                   result = result.replaceAll(
-                          "(?i)</tr>",
+                          "(?is)</table>",
                           "<br>"
                   );
 
                   result = result.replaceAll(
-                          "(?i)</?(th|td)[^>]*>",
-                          " | "
-                  );
-
-                  result = result.replaceAll(
-                          "(?i)</?(thead|tbody|tfoot|table)[^>]*>",
+                          "(?is)</?(thead|tbody|tfoot)[^>]*>",
                           ""
                   );
 
-                  /*
-                   * 给代码块增加空行。
-                   */
-                  result = result.replace(
-                          "<pre>",
-                          "<br><tt>"
+                  result = result.replaceAll(
+                          "(?is)<tr[^>]*>",
+                          ""
                   );
 
-                  result = result.replace(
-                          "</pre>",
-                          "</tt><br>"
+                  result = result.replaceAll(
+                          "(?is)</tr>",
+                          "<br>"
+                  );
+
+                  result = result.replaceAll(
+                          "(?is)</?(th|td)[^>]*>",
+                          "  |  "
+                  );
+
+                  /*
+                   * -------------------------------------------------
+                   * Horizontal rule
+                   * -------------------------------------------------
+                   */
+
+                  result = result.replaceAll(
+                          "(?is)<hr\\s*/?>",
+                          "<br>────────────────<br>"
+                  );
+
+                  /*
+                   * -------------------------------------------------
+                   * Paragraph spacing
+                   * -------------------------------------------------
+                   */
+
+                  result = result.replaceAll(
+                          "(?is)</p>",
+                          "</p><br>"
                   );
 
                   return result;
@@ -348,35 +489,23 @@ jobs:
           package com.example.mtmarkdown;
 
           import android.graphics.drawable.Drawable;
-          import android.os.Handler;
-          import android.os.Looper;
           import android.text.Spanned;
 
           import com.example.mtmarkdown.engine.CommonMarkRendererEngine;
           import com.example.mtmarkdown.engine.MarkdownRendererEngine;
 
-          import java.util.concurrent.ExecutorService;
-          import java.util.concurrent.Executors;
-
           import bin.mt.plugin.api.editor.BaseTextEditorToolMenu;
           import bin.mt.plugin.api.editor.TextEditor;
           import bin.mt.plugin.api.ui.PluginUI;
+          import bin.mt.plugin.api.ui.PluginView;
 
           ${MATERIAL_IMPORT}
 
           public final class MarkdownPreviewToolMenu
                   extends BaseTextEditorToolMenu {
 
-              private static final int MAX_CHARS =
+              private static final int MAX_PREVIEW_CHARS =
                       300000;
-
-              private final ExecutorService executor =
-                      Executors.newSingleThreadExecutor();
-
-              private final Handler mainHandler =
-                      new Handler(
-                              Looper.getMainLooper()
-                      );
 
               private final MarkdownRendererEngine engine =
                       new CommonMarkRendererEngine();
@@ -404,64 +533,85 @@ jobs:
                       TextEditor editor
               ) {
 
-                  final String markdown;
-
                   try {
 
-                      markdown =
+                      /*
+                       * 直接同步执行。
+                       *
+                       * 这里故意不使用 Executor/Handler，
+                       * 先把“正在渲染但没有结果”的问题彻底排除。
+                       */
+                      String markdown =
                               readMarkdown(editor);
 
-                  } catch (Throwable e) {
+                      if (markdown == null ||
+                              markdown.trim().isEmpty()) {
 
-                      pluginUI.showToastL(
-                              "读取编辑器内容失败："
-                                      + messageOf(e)
-                      );
+                          pluginUI.showToast(
+                                  "没有可预览的 Markdown 内容"
+                          );
 
-                      return;
-                  }
+                          return;
+                      }
 
-                  if (markdown == null ||
-                          markdown.trim().isEmpty()) {
+                      if (markdown.length() >
+                              MAX_PREVIEW_CHARS) {
 
-                      pluginUI.showToast(
-                              "没有可预览的 Markdown 内容"
-                      );
+                          markdown =
+                                  markdown.substring(
+                                          0,
+                                          MAX_PREVIEW_CHARS
+                                  );
 
-                      return;
-                  }
+                          pluginUI.showToast(
+                                  "内容超过 300000 字符，"
+                                          + "已截取前 300000 字符"
+                          );
+                      }
 
-                  final String source;
-
-                  if (markdown.length() >
-                          MAX_CHARS) {
-
-                      source =
-                              markdown.substring(
-                                      0,
-                                      MAX_CHARS
+                      /*
+                       * Markdown -> HTML
+                       */
+                      String html =
+                              engine.renderToHtml(
+                                      markdown
                               );
 
-                      pluginUI.showToast(
-                              "内容超过 300000 字符，"
-                                      + "已截取前 300000 字符"
+                      /*
+                       * HTML -> Android Spanned
+                       */
+                      Spanned rendered =
+                              MarkdownHtml.render(
+                                      html
+                              );
+
+                      if (rendered == null) {
+
+                          throw new IllegalStateException(
+                                  "Markdown 渲染结果为空"
+                          );
+                      }
+
+                      /*
+                       * 关键：
+                       *
+                       * 直接把 Spanned 作为 CharSequence
+                       * 传给 MT，而不是 toString()。
+                       *
+                       * MT V3 PluginUI 的 showMessage()
+                       * 参数就是 CharSequence。
+                       */
+                      showPreview(
+                              pluginUI,
+                              rendered
                       );
 
-                  } else {
+                  } catch (Throwable error) {
 
-                      source = markdown;
+                      pluginUI.showErrorMessage(
+                              error
+                      );
                   }
-
-                  pluginUI.showToast(
-                          "正在渲染 Markdown…"
-                  );
-
-                  executor.execute(
-                          () -> render(
-                                  pluginUI,
-                                  source
-                          )
-                  );
               }
 
               private String readMarkdown(
@@ -488,105 +638,40 @@ jobs:
                   );
               }
 
-              private void render(
+              private void showPreview(
                       PluginUI pluginUI,
-                      String markdown
+                      Spanned rendered
               ) {
 
-                  try {
+                  /*
+                   * 使用独立预览对话框。
+                   *
+                   * 编辑器里的原 Markdown 不修改。
+                   */
+                  PluginView preview =
+                          pluginUI
+                                  .buildVerticalLayout()
+                                  .addTextView(
+                                          "markdown_preview"
+                                  )
+                                  .text(rendered)
+                                  .paddingDp(18)
+                                  .widthMatchParent()
+                                  .build();
 
-                      /*
-                       * Markdown
-                       *   ↓
-                       * CommonMark HTML
-                       *   ↓
-                       * Android Spanned
-                       *   ↓
-                       * PluginDialog.setMessage(CharSequence)
-                       *
-                       * 不再经过 PluginView/TextView Builder。
-                       */
-                      String html =
-                              engine.renderToHtml(
-                                      markdown
-                              );
-
-                      if (html == null ||
-                              html.trim().isEmpty()) {
-
-                          throw new IllegalStateException(
-                                  "渲染器没有产生 HTML"
-                          );
-                      }
-
-                      Spanned content =
-                              MarkdownHtml.render(
-                                      html
-                              );
-
-                      if (content == null) {
-
-                          throw new IllegalStateException(
-                                  "HTML 转换失败"
-                          );
-                      }
-
-                      mainHandler.post(
-                              () -> showResult(
-                                      pluginUI,
-                                      content
-                              )
-                      );
-
-                  } catch (Throwable e) {
-
-                      final String error =
-                              messageOf(e);
-
-                      mainHandler.post(
-                              () ->
-                                      pluginUI.showToastL(
-                                              "Markdown 渲染失败："
-                                                      + error
-                                      )
-                      );
-                  }
-              }
-
-              private void showResult(
-                      PluginUI pluginUI,
-                      Spanned content
-              ) {
-
-                  pluginUI.buildDialog()
+                  pluginUI
+                          .buildDialog()
                           .setTitle(
                                   "Markdown 预览 · "
                                           + engine
                                                   .versionName()
                           )
-                          .setMessage(content)
+                          .setView(preview)
                           .setPositiveButton(
                                   "关闭",
                                   null
                           )
                           .show();
-              }
-
-              private static String messageOf(
-                      Throwable error
-              ) {
-
-                  String message =
-                          error.getMessage();
-
-                  if (message != null &&
-                          !message.isEmpty()) {
-
-                      return message;
-                  }
-
-                  return error.getClass()
-                          .getSimpleName();
               }
           }
           JAVA
@@ -607,9 +692,10 @@ jobs:
               encoding="utf-8"
           )
 
-          # --------------------------------------------------------
-          # Replace mtPlugin block.
-          # --------------------------------------------------------
+          # ---------------------------------------------------------
+          # Replace mtPlugin block using balanced braces.
+          # ---------------------------------------------------------
+
           marker = "mtPlugin"
           start = text.find(marker)
 
@@ -656,8 +742,8 @@ jobs:
           new_block = """
           mtPlugin {
               pluginID = "com.example.mtmarkdownpreview"
-              versionCode = 5
-              versionName = "v1.4.0"
+              versionCode = 6
+              versionName = "v1.5.0"
               name = "Markdown 预览"
               description = "MT 管理器 Markdown 预览与渲染引擎升级插件"
 
@@ -673,10 +759,11 @@ jobs:
               + text[end:]
           )
 
-          # --------------------------------------------------------
-          # CommonMark dependencies.
-          # --------------------------------------------------------
-          deps = """
+          # ---------------------------------------------------------
+          # Add CommonMark dependencies exactly once.
+          # ---------------------------------------------------------
+
+          dependencies = """
                   implementation "org.commonmark:commonmark:0.30.0"
                   implementation "org.commonmark:commonmark-ext-gfm-tables:0.30.0"
                   implementation "org.commonmark:commonmark-ext-gfm-strikethrough:0.30.0"
@@ -691,31 +778,37 @@ jobs:
               not in text
           ):
 
-              dependency_marker =
-                  text.find("dependencies {")
+              dependency_marker = text.find(
+                  "dependencies {"
+              )
 
               if dependency_marker < 0:
 
-                  text += (
-                      "\n\n"
-                      "dependencies {\n"
-                      + deps
+                  text = (
+                      text
+                      + "\n\n"
+                      + "dependencies {\n"
+                      + dependencies
                       + "\n}\n"
                   )
 
               else:
 
-                  brace =
-                      text.find(
-                          "{",
-                          dependency_marker
+                  dependency_brace = text.find(
+                      "{",
+                      dependency_marker
+                  )
+
+                  if dependency_brace < 0:
+                      raise SystemExit(
+                          "ERROR: dependencies opening brace not found."
                       )
 
                   text = (
-                      text[:brace + 1]
+                      text[:dependency_brace + 1]
                       + "\n"
-                      + deps
-                      + text[brace + 1:]
+                      + dependencies
+                      + text[dependency_brace + 1:]
                   )
 
           path.write_text(
@@ -724,7 +817,7 @@ jobs:
           )
           PY
 
-      - name: Verify generated files
+      - name: Verify source
         shell: bash
         run: |
           set -e
@@ -743,13 +836,13 @@ jobs:
           echo
           echo "===== MarkdownHtml.java ====="
 
-          sed -n '1,360p' \
+          sed -n '1,460p' \
             mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/MarkdownHtml.java
 
           echo
           echo "===== CommonMarkRendererEngine.java ====="
 
-          sed -n '1,340p' \
+          sed -n '1,360p' \
             mt-plugin-v3-demo/template/src/main/java/com/example/mtmarkdown/engine/CommonMarkRendererEngine.java
 
       - name: Prepare Gradle
@@ -766,7 +859,7 @@ jobs:
           set -e
           ./gradlew --version
 
-      - name: Build MTP
+      - name: Build release MTP
         working-directory: mt-plugin-v3-demo
         shell: bash
         run: |
@@ -777,7 +870,7 @@ jobs:
             --stacktrace \
             --no-daemon
 
-      - name: Find MTP
+      - name: Find generated MTP
         shell: bash
         run: |
           set -e
@@ -795,7 +888,7 @@ jobs:
       - name: Upload MTP
         uses: actions/upload-artifact@v4
         with:
-          name: MT-Markdown-Preview-v1.4.0
+          name: MT-Markdown-Preview-v1.5.0
           path: |
             mt-plugin-v3-demo/template/build/outputs/mt-plugin/*.mtp
           if-no-files-found: error
