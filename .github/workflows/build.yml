@@ -150,7 +150,6 @@ jobs:
           import bin.mt.plugin.api.editor.TextEditor;
           import bin.mt.plugin.api.ui.PluginUI;
           import bin.mt.plugin.api.ui.PluginView;
-          import bin.mt.plugin.api.ui.icon.MaterialIcons;
 
           public final class MarkdownPreviewToolMenu extends BaseTextEditorToolMenu {
               private static final int MAX_PREVIEW_CHARS = 300_000;
@@ -170,7 +169,7 @@ jobs:
 
               @Override
               public Drawable icon() {
-                  return MaterialIcons.get("visibility");
+                  return null;
               }
 
               @Override
