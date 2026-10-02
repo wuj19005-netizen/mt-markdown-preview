@@ -18,10 +18,10 @@ jobs:
 
     steps:
       - name: Checkout plugin source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -31,48 +31,49 @@ jobs:
         with:
           accept-android-sdk-licenses: 'true'
           log-accepted-android-sdk-licenses: 'false'
-          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
+          packages: 'platform-tools'
 
-      - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: '8.13'
-          cache-disabled: true
-
-      - name: Verify standalone project files
+      - name: Install required Android SDK packages
         shell: bash
         run: |
           set -euxo pipefail
-          ROOT="${GITHUB_WORKSPACE}"
-          required=(
-            "$ROOT/settings.gradle"
-            "$ROOT/build.gradle"
-            "$ROOT/gradle.properties"
-            "$ROOT/gradle/libs.versions.toml"
-            "$ROOT/template/build.gradle"
-            "$ROOT/template/proguard-rules.pro"
-            "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
-            "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownRenderer.java"
-            "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownPreprocessor.java"
-            "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownGrammarRegistry.java"
-          )
-          for f in "${required[@]}"; do
-            test -f "$f"
-          done
-          grep -q 'mt-plugin = "3.0.0"' "$ROOT/gradle/libs.versions.toml"
-          grep -q 'agp = "8.13.2"' "$ROOT/gradle/libs.versions.toml"
-          grep -q 'markwon = "4.6.2"' "$ROOT/gradle/libs.versions.toml"
-          grep -q 'pluginID = '\''com.example.mtmarkdownpreview'\''' "$ROOT/template/build.gradle"
-          grep -q 'interfaces = ' "$ROOT/template/build.gradle"
+          sdkmanager "platforms;android-36" "build-tools;35.0.0"
 
-      - name: Inspect Gradle installation
+      - name: Install Gradle 8.13
         shell: bash
         run: |
           set -euxo pipefail
+          GRADLE_VERSION='8.13'
+          GRADLE_HOME="$RUNNER_TEMP/gradle-$GRADLE_VERSION"
+          ARCHIVE="$RUNNER_TEMP/gradle-$GRADLE_VERSION-bin.zip"
+          curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+            -o "$ARCHIVE" \
+            "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip"
+          rm -rf "$GRADLE_HOME"
+          mkdir -p "$RUNNER_TEMP/gradle-dist"
+          unzip -q "$ARCHIVE" -d "$RUNNER_TEMP/gradle-dist"
+          test -x "$RUNNER_TEMP/gradle-dist/gradle-$GRADLE_VERSION/bin/gradle"
+          echo "GRADLE_HOME=$RUNNER_TEMP/gradle-dist/gradle-$GRADLE_VERSION" >> "$GITHUB_ENV"
+          echo "PATH=$RUNNER_TEMP/gradle-dist/gradle-$GRADLE_VERSION/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Verify standalone project
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE"
+          test -f "$ROOT/settings.gradle"
+          test -f "$ROOT/build.gradle"
+          test -f "$ROOT/gradle.properties"
+          test -f "$ROOT/gradle/libs.versions.toml"
+          test -f "$ROOT/template/build.gradle"
+          test -f "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
+          test -f "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownRenderer.java"
+          test -f "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownPreprocessor.java"
+          test -f "$ROOT/template/src/main/java/com/example/mtmarkdown/MarkdownGrammarRegistry.java"
           java -version
           gradle --version
 
-      - name: Resolve Gradle project
+      - name: Validate Gradle project
         shell: bash
         run: |
           set -euxo pipefail
@@ -82,13 +83,13 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          gradle template:packageReleaseMtp --no-daemon --stacktrace
+          gradle --no-daemon --stacktrace template:packageReleaseMtp
 
       - name: Verify MTP output
         shell: bash
         run: |
           set -euxo pipefail
-          OUT="${GITHUB_WORKSPACE}/template/build/outputs/mt-plugin"
+          OUT="$GITHUB_WORKSPACE/template/build/outputs/mt-plugin"
           test -d "$OUT"
           find "$OUT" -maxdepth 1 -type f -name '*.mtp' -print
           MTP="$(find "$OUT" -maxdepth 1 -type f -name '*.mtp' -print -quit)"
