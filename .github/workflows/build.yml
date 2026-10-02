@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: mt-markdown-preview-v3-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,6 +27,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
@@ -31,86 +36,55 @@ jobs:
           log-accepted-android-sdk-licenses: 'false'
           packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
 
-      - name: Verify Android SDK
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-read-only: false
+
+      - name: Verify standalone project
         shell: bash
         run: |
-          set -eu
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
-          sdkmanager --version
-          sdkmanager --list_installed | grep -E 'platform-tools|platforms;android-36|build-tools;35.0.0' || true
+          set -euxo pipefail
+          test -f "${GITHUB_WORKSPACE}/settings.gradle"
+          test -f "${GITHUB_WORKSPACE}/build.gradle"
+          test -f "${GITHUB_WORKSPACE}/gradle/libs.versions.toml"
+          test -f "${GITHUB_WORKSPACE}/gradle.properties"
+          test -f "${GITHUB_WORKSPACE}/template/build.gradle"
+          test -f "${GITHUB_WORKSPACE}/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
+          test -f "${GITHUB_WORKSPACE}/template/src/main/java/com/example/mtmarkdown/MarkdownRenderer.java"
+          grep -q 'mt-plugin = "3.0.0"' "${GITHUB_WORKSPACE}/gradle/libs.versions.toml"
+          grep -q 'agp = "8.13.2"' "${GITHUB_WORKSPACE}/gradle/libs.versions.toml"
+          grep -q 'markwon = "4.6.2"' "${GITHUB_WORKSPACE}/gradle/libs.versions.toml"
 
-      - name: Fetch MT Plugin V3 demo
+      - name: Resolve Gradle project
         shell: bash
         run: |
-          set -eu
-          rm -rf "${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
-          git clone --depth 1 https://gitee.com/L-JINBIN/mt-plugin-v3-demo.git "${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
-          test -f "${GITHUB_WORKSPACE}/mt-plugin-v3-demo/gradlew"
-          test -f "${GITHUB_WORKSPACE}/mt-plugin-v3-demo/template/build.gradle"
-
-      - name: Overlay plugin source
-        shell: bash
-        run: |
-          set -eux
-          DEMO_DIR="${GITHUB_WORKSPACE}/mt-plugin-v3-demo"
-          SRC_DIR="${GITHUB_WORKSPACE}"
-
-          test -d "${DEMO_DIR}"
-          test -d "${SRC_DIR}/template"
-          test -f "${SRC_DIR}/template/build.gradle"
-
-          shopt -s dotglob nullglob
-          for item in "${SRC_DIR}"/*; do
-            base="$(basename "${item}")"
-            case "${base}" in
-              .git|mt-plugin-v3-demo)
-                continue
-                ;;
-            esac
-            rm -rf "${DEMO_DIR:?}/${base}"
-            cp -a "${item}" "${DEMO_DIR}/${base}"
-          done
-
-          for item in "${SRC_DIR}"/.[!.]*; do
-            [ -e "${item}" ] || continue
-            base="$(basename "${item}")"
-            case "${base}" in
-              .git)
-                continue
-                ;;
-            esac
-            rm -rf "${DEMO_DIR:?}/${base}"
-            cp -a "${item}" "${DEMO_DIR}/${base}"
-          done
-
-          test -f "${DEMO_DIR}/gradlew"
-          test -f "${DEMO_DIR}/template/build.gradle"
-          test -f "${DEMO_DIR}/template/src/main/java/com/example/mtmarkdown/MarkdownPreviewToolMenu.java"
-          test -f "${DEMO_DIR}/template/src/main/java/com/example/mtmarkdown/MarkdownRenderer.java"
-          test -f "${DEMO_DIR}/template/src/main/java/com/example/mtmarkdown/MarkdownPreprocessor.java"
+          set -euxo pipefail
+          gradle --version
+          gradle --no-daemon --stacktrace projects
 
       - name: Build release MTP
-        working-directory: mt-plugin-v3-demo
         shell: bash
         run: |
-          set -eux
-          chmod +x ./gradlew
-          ./gradlew template:packageReleaseMtp --stacktrace --no-daemon
+          set -euxo pipefail
+          gradle template:packageReleaseMtp --stacktrace --no-daemon
 
       - name: Verify MTP output
-        working-directory: mt-plugin-v3-demo
         shell: bash
         run: |
-          set -eux
-          OUT="template/build/outputs/mt-plugin"
+          set -euxo pipefail
+          OUT="${GITHUB_WORKSPACE}/template/build/outputs/mt-plugin"
           test -d "${OUT}"
           find "${OUT}" -maxdepth 1 -type f -name '*.mtp' -print
-          test -n "$(find "${OUT}" -maxdepth 1 -type f -name '*.mtp' -print -quit)"
+          MTP="$(find "${OUT}" -maxdepth 1 -type f -name '*.mtp' -print -quit)"
+          test -n "${MTP}"
+          test -s "${MTP}"
 
       - name: Upload installable MTP
         uses: actions/upload-artifact@v4
         with:
           name: mt-markdown-preview-v3-mtp
-          path: mt-plugin-v3-demo/template/build/outputs/mt-plugin/*.mtp
+          path: template/build/outputs/mt-plugin/*.mtp
           if-no-files-found: error
           retention-days: 14
